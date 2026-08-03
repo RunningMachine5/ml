@@ -4,9 +4,9 @@
 로컬 CSV로 공통 전처리와 평가를 수행하고, Logistic Regression, Decision Tree,
 Random Forest, XGBoost 결과를 원격 MLflow에서 비교하기 위한 베이스라인이다.
 
-파일 이름은 기존 ``fdshield-train-xgboost`` 명령과의 호환성을 위해 유지한다.
-팀원은 코드를 직접 수정하지 말고 ``fdshield-train --model-type ...`` 명령의 옵션만
-바꿔 실행한다. 최종 모델이 결정되면 선택된 모델을 운영용 파이프라인으로 정리한다.
+팀원은 코드를 직접 수정하지 말고
+``python -m fdshield_ml.train_xgboost --model-type ...`` 명령의 옵션만 바꿔
+실행한다. 최종 모델이 결정되면 선택된 모델을 운영용 파이프라인으로 정리한다.
 """
 
 from __future__ import annotations

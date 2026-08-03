@@ -12,24 +12,10 @@ dependencies = [
     "xgboost>=3.1,<4",
 ]
 
-[project.scripts]
-fdshield-mlflow-check = "fdshield_ml.tracking:main"
-# 팀원이 사용하는 공통 명령이다. --model-type으로 네 모델을 선택한다.
-fdshield-train = "fdshield_ml.train_xgboost:main"
-# 기존 문서나 개인 스크립트가 깨지지 않도록 남겨 둔 XGBoost 기본 별칭이다.
-fdshield-train-xgboost = "fdshield_ml.train_xgboost:main"
-
 [dependency-groups]
 dev = [
     "pytest>=8.4,<10",
 ]
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/fdshield_ml"]
 
 [tool.pytest.ini_options]
 addopts = "-q"
