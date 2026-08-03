@@ -60,9 +60,18 @@ MLflow 서버가 모델을 대신 학습하는 것은 아닙니다. 학습은 �
 
 [uv](https://docs.astral.sh/uv/) 설치 후 레포 루트에서 의존성을 설치합니다.
 
+PowerShell:
+
 ```powershell
-uv sync --dev
+uv sync
 Copy-Item .env.tracking.example .env.tracking
+```
+
+Linux/macOS/WSL (Bash):
+
+```bash
+uv sync
+cp .env.tracking.example .env.tracking
 ```
 
 `.env.tracking`에 팀에서 전달받은 MLflow 계정을 입력합니다. 이 파일에는 비밀번호가
@@ -77,8 +86,10 @@ MLFLOW_EXPERIMENT_NAME=fdshield-model-comparison
 
 연결을 확인합니다.
 
-```powershell
-uv run fdshield-mlflow-check --env-file .env.tracking
+Windows/Linux 공통:
+
+```console
+uv run python -m fdshield_ml.tracking --env-file .env.tracking
 ```
 
 - `401 Unauthorized`: 아이디 또는 비밀번호 확인
@@ -90,8 +101,16 @@ uv run fdshield-mlflow-check --env-file .env.tracking
 원본 `train.csv`는 Git에 올리지 않습니다. 공유받은 파일을 다음 위치에 복사하거나
 학습 명령에서 절대 경로를 지정합니다.
 
+PowerShell:
+
 ```powershell
 Copy-Item '<공유받은 경로>\train.csv' data\open\train.csv
+```
+
+Linux/macOS/WSL (Bash):
+
+```bash
+cp '<공유받은 경로>/train.csv' data/open/train.csv
 ```
 
 ## 작은 데이터로 먼저 실행
@@ -99,45 +118,402 @@ Copy-Item '<공유받은 경로>\train.csv' data\open\train.csv
 전체 데이터를 돌리기 전에 2만 건과 작은 XGBoost 모델로 학습부터 MLflow 기록까지
 정상 작동하는지 확인합니다.
 
+PowerShell:
+
 ```powershell
-uv run fdshield-train `
+uv run python -m fdshield_ml.train_xgboost `
   --env-file .env.tracking `
   --data-path data/open/train.csv `
   --model-type xgboost `
   --max-rows 20000 `
   --n-estimators 50 `
-  --run-name "<본인이름>-xgb-smoke"
+  --run-name "<테스트>-xgb-smoke"
 ```
+
+명령 프롬프트(CMD):
+
+```bat
+uv run python -m fdshield_ml.train_xgboost ^
+  --env-file .env.tracking ^
+  --data-path data/open/train.csv ^
+  --model-type xgboost ^
+  --max-rows 20000 ^
+  --n-estimators 50 ^
+  --run-name "<테스트>-xgb-smoke"
+```
+
+Linux/macOS/WSL (Bash):
+
+```bash
+uv run python -m fdshield_ml.train_xgboost \
+  --env-file .env.tracking \
+  --data-path data/open/train.csv \
+  --model-type xgboost \
+  --max-rows 20000 \
+  --n-estimators 50 \
+  --run-name "<테스트>-xgb-smoke"
+```
+
+PowerShell의 줄 연결 문자는 백틱(`` ` ``), CMD는 캐럿(`^`), Bash는 역슬래시(`\`)입니다.
+줄 연결 문자 뒤에 공백을 넣으면 다음 줄과 이어지지 않으므로 주의합니다. 한 줄로
+전부 입력해도 결과는 같습니다. `--run-name`은 MLflow 화면에서 보이는 제목이므로
+한글과 영문을 모두 사용할 수 있고, 모델 성능에는 영향을 주지 않습니다.
 
 성공하면 콘솔에 MLflow Run URL과 주요 평가지표가 출력되고, 공용 MLflow 웹에서
 해당 Run을 확인할 수 있습니다.
 
-## 모델별 실험
+## 수동 하이퍼파라미터 실험
 
-XGBoost 전체 데이터 기준 실험 예시입니다.
+수동 실험은 팀원이 직접 파라미터 값을 정해 한 번씩 실행하는 방식입니다. 처음에는
+기본값으로 Baseline Run을 만든 다음, 한두 개의 값만 변경하면 성능 변화의 원인을
+파악하기 쉽습니다. 선택한 모델에서 사용하지 않는 옵션은 모델 생성에 반영되지 않고
+MLflow에도 모델 파라미터로 기록되지 않습니다.
+
+### 모든 모델의 공통 옵션
+
+| 옵션 | 기본값 | 의미 및 사용 기준 |
+|---|---:|---|
+| `--model-type` | `xgboost` | `logistic-regression`, `decision-tree`, `random-forest`, `xgboost` 중 선택 |
+| `--run-name` | 자동 생성 | MLflow에 표시할 실험 제목. `<이름>-<모델>-<목적>` 형태 권장 |
+| `--max-rows` | 전체 | 빠른 확인에 사용할 최대 행 수. 최종 비교에서는 생략 |
+| `--test-size` | `0.2` | 전체 중 검증 데이터 비율. 팀 비교 중에는 변경하지 않음 |
+| `--random-state` | `42` | 표본 추출, 데이터 분할, 모델 난수 시드. 팀 비교 중에는 고정 |
+| `--n-jobs` | 최대 4 | 모델 학습에 사용할 CPU 작업 수. 개인 PC 상황에 맞게 조정 |
+| `--registered-model-name` | 미지정 | Registry에 등록할 때만 사용. 일반 실험에서는 생략 |
+
+현재 `--test-size`로 분리한 데이터는 이름과 달리 **검증(validation) 데이터**로
+사용합니다. 여러 파라미터를 이 데이터에서 반복 비교하므로 최종 성능을 보증하는
+독립 Test Set은 아닙니다. 팀이 최종 모델을 정할 때는 시연용 입력과 별도로 보관한
+라벨 포함 Test Set에서 한 번 더 평가하는 것이 올바른 구조입니다.
+
+### Logistic Regression
+
+가장 단순한 기준 모델입니다. 복잡한 트리 모델이 정말 개선됐는지 확인하는 Baseline으로
+먼저 실행하는 것을 권장합니다.
+
+| 옵션 | 기본값 | 의미 | 처음 비교할 값 |
+|---|---:|---|---|
+| `--logistic-c` | `1.0` | 규제 강도의 역수. 작을수록 규제가 강해져 모델이 단순해짐 | `0.01`, `0.1`, `1`, `10` |
+| `--logistic-max-iter` | `1000` | 학습 최대 반복 횟수. 수렴 경고가 날 때 늘림 | `1000`, `2000` |
+
+PowerShell:
 
 ```powershell
-uv run fdshield-train `
+uv run python -m fdshield_ml.train_xgboost `
   --env-file .env.tracking `
   --data-path data/open/train.csv `
-  --model-type xgboost `
-  --run-name "<본인이름>-xgb-baseline"
+  --model-type logistic-regression `
+  --logistic-c 0.1 `
+  --run-name "테스트-logistic-c0.1"
 ```
 
-Random Forest의 파라미터를 바꾸는 예시입니다.
+Linux/macOS/WSL (Bash):
+
+```bash
+uv run python -m fdshield_ml.train_xgboost \
+  --env-file .env.tracking \
+  --data-path data/open/train.csv \
+  --model-type logistic-regression \
+  --logistic-c 0.1 \
+  --run-name "테스트-logistic-c0.1"
+```
+
+### Decision Tree
+
+트리 한 개를 사용해 구조가 단순하고 설명하기 쉽지만, 깊이가 커지면 학습 데이터에
+과적합되기 쉽습니다.
+
+| 옵션 | 기본값 | 의미 | 처음 비교할 값 |
+|---|---:|---|---|
+| `--max-depth` | `5` | 트리의 최대 깊이. 클수록 복잡한 규칙을 학습 | `3`, `5`, `8`, `12` |
+| `--min-samples-leaf` | `5` | 하나의 최종 리프에 필요한 최소 샘플 수 | `1`, `5`, `10`, `20` |
+
+PowerShell:
 
 ```powershell
-uv run fdshield-train `
+uv run python -m fdshield_ml.train_xgboost `
+  --env-file .env.tracking `
+  --data-path data/open/train.csv `
+  --model-type decision-tree `
+  --max-depth 8 `
+  --min-samples-leaf 10 `
+  --run-name "테스트-tree-depth8-leaf10"
+```
+
+Linux/macOS/WSL (Bash):
+
+```bash
+uv run python -m fdshield_ml.train_xgboost \
+  --env-file .env.tracking \
+  --data-path data/open/train.csv \
+  --model-type decision-tree \
+  --max-depth 8 \
+  --min-samples-leaf 10 \
+  --run-name "테스트-tree-depth8-leaf10"
+```
+
+### Random Forest
+
+서로 다른 여러 트리의 결과를 합쳐 단일 Decision Tree보다 안정적인 성능을 기대하는
+모델입니다. 트리 수와 깊이를 늘릴수록 대체로 학습 시간과 메모리 사용량도 증가합니다.
+
+| 옵션 | 기본값 | 의미 | 처음 비교할 값 |
+|---|---:|---|---|
+| `--n-estimators` | `300` | 생성할 트리 개수 | `100`, `300`, `500` |
+| `--max-depth` | `5` | 각 트리의 최대 깊이 | `5`, `10`, `15` |
+| `--min-samples-leaf` | `5` | 리프의 최소 샘플 수 | `1`, `5`, `10` |
+| `--max-features` | `sqrt` | 각 분기에서 후보로 볼 Feature 수 방식 | `sqrt`, `log2` |
+
+PowerShell:
+
+```powershell
+uv run python -m fdshield_ml.train_xgboost `
   --env-file .env.tracking `
   --data-path data/open/train.csv `
   --model-type random-forest `
-  --run-name "<본인이름>-rf-depth10" `
   --n-estimators 300 `
-  --max-depth 10
+  --max-depth 10 `
+  --min-samples-leaf 5 `
+  --max-features sqrt `
+  --run-name "테스트-rf-depth10"
+```
+
+Linux/macOS/WSL (Bash):
+
+```bash
+uv run python -m fdshield_ml.train_xgboost \
+  --env-file .env.tracking \
+  --data-path data/open/train.csv \
+  --model-type random-forest \
+  --n-estimators 300 \
+  --max-depth 10 \
+  --min-samples-leaf 5 \
+  --max-features sqrt \
+  --run-name "테스트-rf-depth10"
+```
+
+### XGBoost
+
+이번 프로젝트의 주력 성능 후보입니다. `learning_rate`를 낮추면 보통 더 많은 트리가
+필요하므로 `n_estimators`와 함께 조정합니다. 너무 깊은 트리나 너무 많은 트리는
+학습 시간을 늘리고 과적합을 만들 수 있습니다.
+
+| 옵션 | 기본값 | 의미 | 처음 비교할 값 |
+|---|---:|---|---|
+| `--n-estimators` | `300` | 순차적으로 학습할 트리 개수 | `100`, `300`, `500` |
+| `--max-depth` | `5` | 각 트리의 최대 깊이 | `3`, `5`, `8` |
+| `--learning-rate` | `0.05` | 트리 하나의 보정 반영 크기 | `0.01`, `0.05`, `0.1` |
+| `--subsample` | `0.8` | 트리마다 사용할 학습 행 비율 | `0.6`, `0.8`, `1.0` |
+| `--colsample-bytree` | `0.8` | 트리마다 사용할 Feature 비율 | `0.6`, `0.8`, `1.0` |
+| `--min-child-weight` | `1.0` | 자식 노드 분할에 필요한 최소 가중치 | `1`, `5`, `10` |
+
+PowerShell:
+
+```powershell
+uv run python -m fdshield_ml.train_xgboost `
+  --env-file .env.tracking `
+  --data-path data/open/train.csv `
+  --model-type xgboost `
+  --n-estimators 300 `
+  --max-depth 5 `
+  --learning-rate 0.05 `
+  --subsample 0.8 `
+  --colsample-bytree 0.8 `
+  --min-child-weight 1 `
+  --run-name "테스트-xgb-baseline"
+```
+
+CMD:
+
+```bat
+uv run python -m fdshield_ml.train_xgboost ^
+  --env-file .env.tracking ^
+  --data-path data/open/train.csv ^
+  --model-type xgboost ^
+  --n-estimators 300 ^
+  --max-depth 5 ^
+  --learning-rate 0.05 ^
+  --subsample 0.8 ^
+  --colsample-bytree 0.8 ^
+  --min-child-weight 1 ^
+  --run-name "테스트-xgb-baseline"
+```
+
+Linux/macOS/WSL (Bash):
+
+```bash
+uv run python -m fdshield_ml.train_xgboost \
+  --env-file .env.tracking \
+  --data-path data/open/train.csv \
+  --model-type xgboost \
+  --n-estimators 300 \
+  --max-depth 5 \
+  --learning-rate 0.05 \
+  --subsample 0.8 \
+  --colsample-bytree 0.8 \
+  --min-child-weight 1 \
+  --run-name "테스트-xgb-baseline"
 ```
 
 모델 비교가 목적이라면 한 번에 여러 값을 크게 바꾸기보다 기준 Run에서 파라미터를
 하나씩 변경하는 것이 결과를 해석하기 쉽습니다.
+
+## Optuna 자동 하이퍼파라미터 탐색
+
+Optuna는 사람이 값을 하나씩 입력하는 대신 여러 파라미터 조합을 제안하고, 검증
+`PR-AUC`가 가장 높은 조합을 찾는 라이브러리입니다. 이 레포에서는 다음처럼 동작합니다.
+
+```text
+Optuna Study 1개 = 한 모델 종류의 전체 탐색 작업
+  ├─ Trial 0 = 첫 번째 파라미터 조합 학습 + 검증 PR-AUC
+  ├─ Trial 1 = 두 번째 파라미터 조합 학습 + 검증 PR-AUC
+  ├─ ...
+  └─ Best Trial 파라미터로 모델을 다시 학습하고 모델 artifact 저장
+```
+
+- 학습과 Optuna 실행은 **팀원 PC**에서 수행합니다.
+- 모든 Trial은 같은 학습/검증 분할을 사용하므로 파라미터만 비교합니다.
+- 공용 MLflow에는 부모 Study Run과 그 아래의 Trial Run들이 기록됩니다.
+- 각 Trial은 파라미터·평가지표·학습 시간만 기록해 서버 저장 공간을 아낍니다.
+- 탐색 종료 후 Best Trial의 모델만 부모 Run의 `model` artifact로 저장합니다.
+- `--registered-model-name`을 지정한 경우에도 Best 모델 하나만 Registry에 등록합니다.
+
+### 자동 탐색 범위
+
+| 모델 | Optuna가 자동으로 바꾸는 값 |
+|---|---|
+| Logistic Regression | `logistic_c`: `0.001`~`100` 로그 스케일 |
+| Decision Tree | `max_depth`: `2`~`16`, `min_samples_leaf`: `1`~`50` |
+| Random Forest | `n_estimators`: `100`~`500`, `max_depth`: `3`~`20`, `min_samples_leaf`: `1`~`30`, `max_features`: `sqrt`/`log2` |
+| XGBoost | `n_estimators`: `100`~`600`, `max_depth`: `3`~`10`, `learning_rate`: `0.01`~`0.3`, `subsample`: `0.6`~`1.0`, `colsample_bytree`: `0.6`~`1.0`, `min_child_weight`: `1`~`20` |
+
+탐색 범위는 `fdshield_ml/tuning.py` 한 곳에서 관리합니다. 초보 팀원은 이 파일을
+수정하지 말고 모델 종류, Trial 수, 표본 크기만 CLI에서 선택하면 됩니다.
+
+### 1단계: Optuna Smoke Test
+
+처음에는 2만 행과 5회 Trial로 접속, 학습, MLflow 기록이 모두 되는지만 확인합니다.
+
+PowerShell:
+
+```powershell
+uv run python -m fdshield_ml.tune `
+  --env-file .env.tracking `
+  --data-path data/open/train.csv `
+  --model-type xgboost `
+  --max-rows 20000 `
+  --n-trials 5 `
+  --study-name "테스트-xgb-optuna-smoke"
+```
+
+CMD:
+
+```bat
+uv run python -m fdshield_ml.tune ^
+  --env-file .env.tracking ^
+  --data-path data/open/train.csv ^
+  --model-type xgboost ^
+  --max-rows 20000 ^
+  --n-trials 5 ^
+  --study-name "테스트-xgb-optuna-smoke"
+```
+
+Linux/macOS/WSL (Bash):
+
+```bash
+uv run python -m fdshield_ml.tune \
+  --env-file .env.tracking \
+  --data-path data/open/train.csv \
+  --model-type xgboost \
+  --max-rows 20000 \
+  --n-trials 5 \
+  --study-name "테스트-xgb-optuna-smoke"
+```
+
+### 2단계: 전체 데이터 자동 탐색
+
+Smoke Test가 성공하면 `--max-rows`를 빼고 20회 정도부터 시작합니다. XGBoost는 각
+Trial마다 모델 하나를 새로 학습하므로 Trial 수를 무작정 크게 잡지 않습니다.
+
+PowerShell:
+
+```powershell
+uv run python -m fdshield_ml.tune `
+  --env-file .env.tracking `
+  --data-path data/open/train.csv `
+  --model-type xgboost `
+  --n-trials 20 `
+  --study-name "테스트-xgb-optuna-20"
+```
+
+Linux/macOS/WSL (Bash):
+
+```bash
+uv run python -m fdshield_ml.tune \
+  --env-file .env.tracking \
+  --data-path data/open/train.csv \
+  --model-type xgboost \
+  --n-trials 20 \
+  --study-name "테스트-xgb-optuna-20"
+```
+
+최대 실행 시간을 제한하려면 초 단위 `--timeout`을 함께 지정합니다. 아래는 최대
+1시간 또는 30회 Trial 중 먼저 도달한 조건에서 탐색을 끝냅니다.
+
+PowerShell:
+
+```powershell
+uv run python -m fdshield_ml.tune `
+  --env-file .env.tracking `
+  --data-path data/open/train.csv `
+  --model-type random-forest `
+  --n-trials 30 `
+  --timeout 3600 `
+  --study-name "테스트-rf-optuna-1h"
+```
+
+Linux/macOS/WSL (Bash):
+
+```bash
+uv run python -m fdshield_ml.tune \
+  --env-file .env.tracking \
+  --data-path data/open/train.csv \
+  --model-type random-forest \
+  --n-trials 30 \
+  --timeout 3600 \
+  --study-name "테스트-rf-optuna-1h"
+```
+
+### Optuna 실행 옵션
+
+| 옵션 | 기본값 | 의미 |
+|---|---:|---|
+| `--model-type` | `xgboost` | 자동 탐색할 모델 하나 선택 |
+| `--n-trials` | `20` | 시도할 최대 파라미터 조합 수 |
+| `--timeout` | 제한 없음 | 전체 탐색 최대 시간(초) |
+| `--study-name` | `optuna-<모델>` | MLflow 부모 Run과 Optuna Study 제목 |
+| `--max-rows` | 전체 | Smoke Test용 표본 행 수 |
+| `--n-jobs` | 최대 4 | Trial 안에서 모델이 사용할 CPU 작업 수 |
+| `--registered-model-name` | 미지정 | Best 모델을 Registry에 등록할 때만 지정 |
+
+일반 자동 탐색에서는 Registry 옵션을 생략합니다. 팀이 결과를 검토한 후 배포 후보를
+등록하기로 정했을 때만 아래 옵션을 기존 명령 끝에 추가합니다.
+
+```text
+--registered-model-name fdshield-fraud-detector
+```
+
+### MLflow에서 Optuna 결과 읽기
+
+1. `fdshield-model-comparison` Experiment에서 `run_kind=optuna_study`인 부모 Run을 찾습니다.
+2. 부모 Run의 `validation_pr_auc`와 `best_*` 파라미터를 확인합니다.
+3. 자식 Trial Run에서는 각 조합의 지표와 `training_seconds`를 비교합니다.
+4. `tuning/study_summary.json`에는 전체 Trial, Best Trial, 파라미터가 저장됩니다.
+5. 부모 Run의 `model`에는 Best 파라미터로 다시 학습한 모델만 저장됩니다.
+
+Optuna는 가장 높은 검증 PR-AUC 조합을 자동으로 선택하지만, 그 모델이 무조건 운영에
+가장 적합하다는 뜻은 아닙니다. Recall, Precision, False Positive Rate, 학습 시간도
+확인하고, 최종 후보는 별도의 Test Set과 시연 시나리오로 검증합니다.
 
 ## MLflow에서 결과 확인하기
 
@@ -168,8 +544,10 @@ uv run fdshield-train `
 
 후보 모델을 등록할 때만 다음 옵션을 추가합니다.
 
+PowerShell:
+
 ```powershell
-uv run fdshield-train `
+uv run python -m fdshield_ml.train_xgboost `
   --env-file .env.tracking `
   --data-path data/open/train.csv `
   --model-type xgboost `
@@ -177,21 +555,41 @@ uv run fdshield-train `
   --registered-model-name fdshield-fraud-detector
 ```
 
+Linux/macOS/WSL (Bash):
+
+```bash
+uv run python -m fdshield_ml.train_xgboost \
+  --env-file .env.tracking \
+  --data-path data/open/train.csv \
+  --model-type xgboost \
+  --run-name "candidate-01" \
+  --registered-model-name fdshield-fraud-detector
+```
+
 ## 코드 위치와 테스트
 
 | 경로 | 역할 |
 |---|---|
-| `src/fdshield_ml/tracking.py` | MLflow 주소와 인증 설정 및 연결 확인 |
-| `src/fdshield_ml/features.py` | 라벨 변환, 식별자 제외, 시간 Feature 생성 |
-| `src/fdshield_ml/training.py` | 공통 데이터 분할, 전처리, 모델 생성 및 평가 |
-| `src/fdshield_ml/train_xgboost.py` | CLI 입력, 로컬 학습, MLflow 기록 실행 |
+| `fdshield_ml/tracking.py` | MLflow 주소와 인증 설정 및 연결 확인 |
+| `fdshield_ml/features.py` | 라벨 변환, 식별자 제외, 시간 Feature 생성 |
+| `fdshield_ml/training.py` | 공통 데이터 분할, 전처리, 모델 생성 및 평가 |
+| `fdshield_ml/train_xgboost.py` | CLI 입력, 로컬 학습, MLflow 기록 실행 |
+| `fdshield_ml/tuning.py` | 모델별 Optuna 탐색 범위와 Best 설정 복원 |
+| `fdshield_ml/tune.py` | Optuna Study 실행, Trial 및 Best 모델 MLflow 기록 |
 | `tests/test_training.py` | 가짜 데이터로 전체 학습 흐름 검증 |
+| `tests/test_tuning.py` | 모델별 탐색 범위와 Best 설정 복원 검증 |
 
 코드를 수정했다면 테스트를 실행합니다.
 
-```powershell
-uv run pytest
+Windows/Linux 공통:
+
+```console
+uv run python -m pytest
 ```
+
+이 레포는 백엔드처럼 프로젝트 자체를 별도 패키지로 빌드하지 않고, 레포 루트의
+`fdshield_ml` 모듈을 직접 실행합니다. 따라서 `uv sync` 중 프로젝트 빌드용 임시
+Python을 생성하지 않습니다.
 
 공통 데이터 분할과 평가 방식을 임의로 변경하면 다른 팀원의 Run과 공정하게 비교할
 수 없으므로, 변경이 필요한 경우 팀에서 먼저 기준을 합의합니다.
