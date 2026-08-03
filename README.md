@@ -210,8 +210,10 @@ uv run pytest
 - MLflow 3.13.0 Tracking Server와 기본 인증
 - Artifact는 `mlflow_artifacts` Docker 볼륨에 저장
 - MLflow 5000번 포트는 VM의 `127.0.0.1`에만 공개
-- 공용 Nginx가 `mlflow.fdshield.cloud` 요청을 MLflow 컨테이너로 전달
-- 현재 Nginx 설정은 인증서 발급 전 HTTP 부트스트랩 단계
+- 공용 Nginx가 `mlflow.fdshield.cloud`와 `api.fdshield.cloud`를 HTTPS로 전달
+- MLflow의 DNS rebinding 보호 허용 목록에 `mlflow.fdshield.cloud`만 공개 도메인으로 등록
+- VM의 `/etc/letsencrypt` 인증서를 Nginx 컨테이너에 읽기 전용으로 연결
+- Certbot Webroot 볼륨을 공유해 Nginx를 중지하지 않고 인증서 갱신
 
 아래 명령은 세 레포의 상위 폴더에서 실행합니다.
 
@@ -249,15 +251,21 @@ docker compose `
   logs --tail 100 mlflow
 ```
 
-VM 안에서는 먼저 MLflow와 Nginx를 각각 확인합니다.
+Nginx를 실행하기 전에 VM에 다음 인증서가 발급되어 있어야 합니다.
+
+```text
+/etc/letsencrypt/live/mlflow.fdshield.cloud/fullchain.pem
+/etc/letsencrypt/live/mlflow.fdshield.cloud/privkey.pem
+```
+
+VM 안에서는 각 경로를 확인합니다.
 
 ```bash
 curl -I http://127.0.0.1:5000
-curl -I -H 'Host: mlflow.fdshield.cloud' http://127.0.0.1
+curl -I https://mlflow.fdshield.cloud
+curl https://api.fdshield.cloud/health
 ```
 
-두 번째 요청이 MLflow의 로그인 응답을 반환하면 Nginx의 HTTP Reverse Proxy가
-연결된 것입니다. 현재 `deploy/nginx/mlflow.conf`는 Let's Encrypt 인증서를 발급할
-수 있도록 80번 포트를 먼저 여는 부트스트랩 설정입니다. 인증서를 발급하고 HTTPS
-설정을 적용한 후에만 팀원들의 `.env.tracking`에서
-`https://mlflow.fdshield.cloud`를 사용합니다.
+MLflow 요청이 `401 Unauthorized`를 반환하면 기본 인증까지 정상 연결된 것입니다.
+API 상태 확인은 `200 OK`를 반환해야 합니다. 80번 HTTP 요청은 같은 주소의 HTTPS로
+리다이렉트됩니다.

@@ -66,6 +66,10 @@ services:
       - "5000"
       - --workers
       - "2"
+      # MLflow 3.5+의 DNS rebinding 보호 기능에 공개 도메인을 명시합니다.
+      # localhost 항목은 VM 안에서 직접 상태를 확인할 때 사용합니다.
+      - --allowed-hosts
+      - mlflow.fdshield.cloud,localhost:*,127.0.0.1:*
     # Nginx/HTTPS 연결 전에는 외부에 5000번 포트를 직접 공개하지 않습니다.
     ports:
       - "127.0.0.1:5000:5000"
@@ -83,8 +87,7 @@ services:
       retries: 10
       start_period: 20s
 
-  # 같은 VM에서 사용하는 공용 Reverse Proxy입니다. 현재는 MLflow 도메인만
-  # 연결하며, Backend 도메인이 확정되면 같은 Nginx에 server 블록을 추가합니다.
+  # 같은 VM에서 MLflow와 Backend를 HTTPS로 공개하는 공용 Reverse Proxy입니다.
   nginx:
     image: nginx:1.28-alpine
     container_name: fdshield-nginx-container
@@ -94,9 +97,15 @@ services:
         condition: service_healthy
     ports:
       - "80:80"
+      - "443:443"
     volumes:
       # Compose 경로는 첫 번째 파일인 backend/docker-compose.yml 기준입니다.
       - ../ml/deploy/nginx/mlflow.conf:/etc/nginx/conf.d/mlflow.conf:ro
+      # 인증서는 VM 호스트의 Certbot이 발급하고 Nginx에는 읽기 전용으로 제공합니다.
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      # HTTP-01 검증 파일은 Certbot이 쓰고 Nginx가 HTTP로 읽는 공유 Webroot입니다.
+      - certbot_webroot:/var/www/certbot:ro
 
 volumes:
   mlflow_artifacts:
+  certbot_webroot:
