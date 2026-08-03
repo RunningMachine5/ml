@@ -175,6 +175,7 @@ MLflow에도 모델 파라미터로 기록되지 않습니다.
 |---|---:|---|
 | `--model-type` | `xgboost` | `logistic-regression`, `decision-tree`, `random-forest`, `xgboost` 중 선택 |
 | `--run-name` | 자동 생성 | MLflow에 표시할 실험 제목. `<이름>-<모델>-<목적>` 형태 권장 |
+| `--comparison-group` | 미지정 | 같은 데이터·분할 조건으로 비교할 Run에 공통 이름 지정. 팀 비교 시 같은 값을 사용 |
 | `--max-rows` | 전체 | 빠른 확인에 사용할 최대 행 수. 최종 비교에서는 생략 |
 | `--test-size` | `0.2` | 전체 중 검증 데이터 비율. 팀 비교 중에는 변경하지 않음 |
 | `--random-state` | `42` | 표본 추출, 데이터 분할, 모델 난수 시드. 팀 비교 중에는 고정 |
@@ -492,6 +493,7 @@ uv run python -m fdshield_ml.tune \
 | `--n-trials` | `20` | 시도할 최대 파라미터 조합 수 |
 | `--timeout` | 제한 없음 | 전체 탐색 최대 시간(초) |
 | `--study-name` | `optuna-<모델>` | MLflow 부모 Run과 Optuna Study 제목 |
+| `--comparison-group` | 미지정 | 같은 조건의 수동 학습 Run과 Study를 한 화면에서 묶을 공통 이름 |
 | `--max-rows` | 전체 | Smoke Test용 표본 행 수 |
 | `--n-jobs` | 최대 4 | Trial 안에서 모델이 사용할 CPU 작업 수 |
 | `--registered-model-name` | 미지정 | Best 모델을 Registry에 등록할 때만 지정 |
@@ -522,6 +524,26 @@ Optuna는 가장 높은 검증 PR-AUC 조합을 자동으로 선택하지만, �
 3. 비교할 Run을 체크하고 Compare를 선택합니다.
 4. 같은 검증 데이터 기준으로 PR-AUC, Recall, Precision, F1을 비교합니다.
 5. 성능뿐 아니라 False Positive Rate와 Confusion Matrix도 함께 확인합니다.
+
+### 팀 모델 비교 대시보드 만들기
+
+팀원이 같은 데이터, `--test-size`, `--random-state`로 실험할 때는 동일한
+`--comparison-group`을 지정합니다. 예시는 다음과 같습니다.
+
+```text
+--comparison-group fdshield-open-v1-full-model-comparison
+```
+
+MLflow의 Training runs 검색창에는 다음 필터를 입력합니다.
+
+```text
+tags.comparison_group = "fdshield-open-v1-full-model-comparison"
+```
+
+그다음 `validation_pr_auc`를 내림차순으로 정렬하고 Chart 화면의 검색창에
+`validation_pr_auc`를 입력하면 동일 조건의 모델 성능을 막대 차트로 비교할 수 있습니다.
+`owner` 태그에는 `.env.tracking`의 사용자 이름이, `run_kind`에는 수동 학습인지 Optuna
+Study인지가 자동 기록되므로 누가 어떤 방식으로 실행했는지도 함께 확인할 수 있습니다.
 
 사기 탐지에서는 지표 하나만으로 최종 모델을 고르면 안 됩니다.
 
