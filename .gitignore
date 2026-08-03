@@ -15,6 +15,7 @@ data/open/*
 mlruns/
 artifacts/
 
-# 서버 주소와 운영 절차가 자세히 적힌 내부 문서는 로컬에서만 관리합니다.
-docs/MLFLOW_SERVER_RUNBOOK.md
-docs/CERTBOT_STANDALONE_VS_WEBROOT.md
+# 내부 문서는 로컬에서만 관리합니다.
+# 실제 폴더는 docs이지만, 실수로 .docs를 만들어도 함께 제외합니다.
+docs/
+.docs/
