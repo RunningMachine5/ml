@@ -1,0 +1,102 @@
+services:
+  # backend Compose의 db 서비스를 확장합니다. 이 파일만 단독으로 실행하지 않습니다.
+  db:
+    # backend의 로컬 개발용 5432 공개 설정을 VM 배포에서는 제거합니다.
+    ports: !reset []
+    expose:
+      - "5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-fdshield-db}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-fdshield-db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # 기존 볼륨에도 안전하게 mlflow 논리 DB를 생성하는 일회성 초기화 작업입니다.
+  mlflow-db-init:
+    image: postgres:18-alpine
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      MLFLOW_DB: ${MLFLOW_DB:-mlflow}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        if [ "$$(psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$$MLFLOW_DB'")" != "1" ]; then
+          psql -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$$MLFLOW_DB\" OWNER \"$$PGUSER\""
+        fi
+
+  mlflow:
+    build:
+      # 두 Compose 파일을 backend, ml 순서로 병합할 때 backend 기준 상대경로입니다.
+      context: ../ml
+      dockerfile: deploy/mlflow/Dockerfile
+    image: fdshield/mlflow:3.13.0
+    container_name: fdshield-mlflow-container
+    restart: unless-stopped
+    depends_on:
+      mlflow-db-init:
+        condition: service_completed_successfully
+    environment:
+      MLFLOW_DATABASE_URI: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${MLFLOW_DB:-mlflow}
+      MLFLOW_ADMIN_USERNAME: ${MLFLOW_ADMIN_USERNAME}
+      MLFLOW_ADMIN_PASSWORD: ${MLFLOW_ADMIN_PASSWORD}
+      MLFLOW_FLASK_SERVER_SECRET_KEY: ${MLFLOW_FLASK_SERVER_SECRET_KEY}
+    command:
+      - mlflow
+      - server
+      - --app-name
+      - basic-auth
+      - --backend-store-uri
+      - postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${MLFLOW_DB:-mlflow}
+      - --artifacts-destination
+      - /mlflow/artifacts
+      - --host
+      - 0.0.0.0
+      - --port
+      - "5000"
+      - --workers
+      - "2"
+    # Nginx/HTTPS 연결 전에는 외부에 5000번 포트를 직접 공개하지 않습니다.
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - mlflow_artifacts:/mlflow/artifacts
+    healthcheck:
+      # Basic Auth가 걸린 HTTP 경로 대신 서버 소켓이 열렸는지만 확인합니다.
+      test:
+        - CMD
+        - python
+        - -c
+        - import socket; socket.create_connection(('127.0.0.1', 5000), 3).close()
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # 같은 VM에서 사용하는 공용 Reverse Proxy입니다. 현재는 MLflow 도메인만
+  # 연결하며, Backend 도메인이 확정되면 같은 Nginx에 server 블록을 추가합니다.
+  nginx:
+    image: nginx:1.28-alpine
+    container_name: fdshield-nginx-container
+    restart: unless-stopped
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    ports:
+      - "80:80"
+    volumes:
+      # Compose 경로는 첫 번째 파일인 backend/docker-compose.yml 기준입니다.
+      - ../ml/deploy/nginx/mlflow.conf:/etc/nginx/conf.d/mlflow.conf:ro
+
+volumes:
+  mlflow_artifacts:

@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+!.env.tracking.example
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.coverage
+htmlcov/
+
+# 원본 데이터와 로컬 학습 결과는 Git에 올리지 않습니다.
+data/open/*
+!data/open/README.md
+mlruns/
+artifacts/
