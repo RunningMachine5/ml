@@ -62,6 +62,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--experiment-name", default=None)
     parser.add_argument("--run-name", default=None)
     parser.add_argument(
+        "--comparison-group",
+        default=None,
+        help="Tag used to group runs that share the same comparison conditions.",
+    )
+    parser.add_argument(
         "--model-type",
         choices=MODEL_TYPES,
         default="xgboost",
@@ -210,15 +215,18 @@ def main() -> None:
             {**evaluation.metrics, "training_seconds": training_seconds}
         )
         # 태그는 프로젝트나 작업 종류를 기준으로 Run을 검색할 때 사용한다.
-        mlflow.set_tags(
-            {
-                "project": "fdshield",
-                "task": "binary_fraud_detection",
-                "model_family": config.model_type,
-                "data_privacy": "direct_identifiers_excluded",
-                "tracking_client": "fdshield-ml",
-            }
-        )
+        run_tags = {
+            "project": "fdshield",
+            "task": "binary_fraud_detection",
+            "owner": os.getenv("MLFLOW_TRACKING_USERNAME", "unknown"),
+            "run_kind": "manual_training",
+            "model_family": config.model_type,
+            "data_privacy": "direct_identifiers_excluded",
+            "tracking_client": "fdshield-ml",
+        }
+        if args.comparison_group:
+            run_tags["comparison_group"] = args.comparison_group
+        mlflow.set_tags(run_tags)
 
         # 6. 원본 행 대신 MLflow Dataset 메타데이터와 스키마를 기록한다.
         # from_pandas는 여기서 데이터셋을 설명하기 위한 객체를 만들며, 이 예제는

@@ -57,6 +57,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--env-file", default=".env.tracking")
     parser.add_argument("--experiment-name", default=None)
     parser.add_argument("--study-name", default=None)
+    parser.add_argument(
+        "--comparison-group",
+        default=None,
+        help="Tag used to group studies that share the same comparison conditions.",
+    )
     parser.add_argument("--model-type", choices=MODEL_TYPES, default="xgboost")
     parser.add_argument("--registered-model-name", default=None)
 
@@ -176,15 +181,17 @@ def main() -> None:
                 "n_jobs_per_model": base_config.n_jobs,
             }
         )
-        mlflow.set_tags(
-            {
-                "project": "fdshield",
-                "task": "binary_fraud_detection",
-                "run_kind": "optuna_study",
-                "model_family": args.model_type,
-                "data_privacy": "direct_identifiers_excluded",
-            }
-        )
+        study_tags = {
+            "project": "fdshield",
+            "task": "binary_fraud_detection",
+            "owner": os.getenv("MLFLOW_TRACKING_USERNAME", "unknown"),
+            "run_kind": "optuna_study",
+            "model_family": args.model_type,
+            "data_privacy": "direct_identifiers_excluded",
+        }
+        if args.comparison_group:
+            study_tags["comparison_group"] = args.comparison_group
+        mlflow.set_tags(study_tags)
 
         def objective(trial: optuna.Trial) -> float:
             """한 파라미터 조합을 학습하고 PR-AUC를 Optuna에 반환한다."""
@@ -217,13 +224,15 @@ def main() -> None:
                         "training_seconds": training_seconds,
                     }
                 )
-                mlflow.set_tags(
-                    {
-                        "project": "fdshield",
-                        "run_kind": "optuna_trial",
-                        "model_family": args.model_type,
-                    }
-                )
+                trial_tags = {
+                    "project": "fdshield",
+                    "owner": os.getenv("MLFLOW_TRACKING_USERNAME", "unknown"),
+                    "run_kind": "optuna_trial",
+                    "model_family": args.model_type,
+                }
+                if args.comparison_group:
+                    trial_tags["comparison_group"] = args.comparison_group
+                mlflow.set_tags(trial_tags)
                 trial.set_user_attr("mlflow_run_id", child_run.info.run_id)
 
             return evaluation.metrics["validation_pr_auc"]
