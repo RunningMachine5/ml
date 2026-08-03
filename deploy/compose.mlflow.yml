@@ -70,6 +70,9 @@ services:
       # localhost 항목은 VM 안에서 직접 상태를 확인할 때 사용합니다.
       - --allowed-hosts
       - mlflow.fdshield.cloud,localhost:*,127.0.0.1:*
+      # 브라우저 UI의 AJAX 요청 Origin만 명시적으로 허용합니다.
+      - --cors-allowed-origins
+      - https://mlflow.fdshield.cloud
     # Nginx/HTTPS 연결 전에는 외부에 5000번 포트를 직접 공개하지 않습니다.
     ports:
       - "127.0.0.1:5000:5000"
