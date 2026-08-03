@@ -69,7 +69,7 @@ def verify_connection() -> int:
 
 
 def main() -> None:
-    """``fdshield-mlflow-check`` 명령의 실행 진입점."""
+    """공용 MLflow 연결 확인 모듈의 실행 진입점."""
 
     parser = argparse.ArgumentParser(
         description="Check access to the shared FDShield MLflow server."
@@ -80,3 +80,7 @@ def main() -> None:
     visible_count = verify_connection()
     print(f"MLflow connection OK: {tracking_uri}")
     print(f"Visible experiments (up to 10): {visible_count}")
+
+
+if __name__ == "__main__":
+    main()
