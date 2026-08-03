@@ -14,3 +14,8 @@ data/open/*
 !data/open/README.md
 mlruns/
 artifacts/
+
+# 내부 문서는 로컬에서만 관리합니다.
+# 실제 폴더는 docs이지만, 실수로 .docs를 만들어도 함께 제외합니다.
+docs/
+.docs/
