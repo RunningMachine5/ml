@@ -56,6 +56,7 @@ jobs:
           gcloud builds submit \
             --project="$GCP_PROJECT_ID" \
             --tag="$DEPLOY_IMAGE" \
+            --suppress-logs \
             --quiet \
             .
 
