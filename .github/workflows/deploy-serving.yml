@@ -3,6 +3,16 @@ name: ML Serving Cloud Run CD
 on:
   push:
     branches: [main]
+    paths:
+      - ".github/workflows/deploy-serving.yml"
+      - ".dockerignore"
+      - "Dockerfile.serving"
+      - "cloudbuild.serving.yaml"
+      - "deploy/serving-requirements.txt"
+      - "fdshield_ml/__init__.py"
+      - "fdshield_ml/features.py"
+      - "fdshield_ml/common/**"
+      - "fdshield_ml/serving/**"
   workflow_dispatch:
 
 permissions:
@@ -56,7 +66,8 @@ jobs:
           build_id="$(
             gcloud builds submit \
               --project="$GCP_PROJECT_ID" \
-              --tag="$DEPLOY_IMAGE" \
+              --config="cloudbuild.serving.yaml" \
+              --substitutions="_DEPLOY_IMAGE=$DEPLOY_IMAGE" \
               --async \
               --format="value(id)" \
               --quiet \

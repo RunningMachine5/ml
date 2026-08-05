@@ -2,7 +2,7 @@
 
 이 파일은 모델을 학습하거나 결과를 자동으로 기록하지 않는다. ``.env.tracking``의
 서버 주소와 인증 정보를 MLflow 클라이언트에 설정하는 역할만 담당한다. 실제 Run,
-파라미터, 지표, 모델 기록 방법은 ``train_xgboost.py`` 예제를 참고한다.
+파라미터, 지표, 모델 기록 방법은 ``train.py`` 예제를 참고한다.
 """
 
 from __future__ import annotations

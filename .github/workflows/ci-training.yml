@@ -1,0 +1,38 @@
+name: ML Training Image CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/ci-training.yml"
+      - ".dockerignore"
+      - "Dockerfile.training"
+      - "cloudbuild.training.yaml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "fdshield_ml/__init__.py"
+      - "fdshield_ml/features.py"
+      - "fdshield_ml/common/**"
+      - "fdshield_ml/training/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ml-training-image-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-training-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Build ML Training image
+        run: |
+          docker build \
+            --file Dockerfile.training \
+            --tag fdshield-ml-training:ci \
+            .

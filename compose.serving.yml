@@ -2,7 +2,7 @@ services:
   ml-serving:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.serving
     image: ${ML_SERVING_IMAGE:-fdshield/ml-serving:local}
     container_name: fdshield-ml-serving-container
     restart: unless-stopped

@@ -37,7 +37,7 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.tree import DecisionTreeClassifier
 from xgboost import XGBClassifier
 
-from fdshield_ml.features import FDShieldFeatureBuilder
+from fdshield_ml.common.features import FDShieldFeatureBuilder
 
 
 @dataclass(frozen=True)

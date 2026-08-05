@@ -1,0 +1,33 @@
+name: ML Serving Image CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/ci-serving.yml"
+      - ".dockerignore"
+      - "Dockerfile.serving"
+      - "cloudbuild.serving.yaml"
+      - "deploy/serving-requirements.txt"
+      - "fdshield_ml/__init__.py"
+      - "fdshield_ml/features.py"
+      - "fdshield_ml/common/**"
+      - "fdshield_ml/serving/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ml-serving-image-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-serving-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Build ML Serving image
+        run: docker build --file Dockerfile.serving --tag fdshield-ml-serving:ci .

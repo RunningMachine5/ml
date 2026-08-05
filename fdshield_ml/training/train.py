@@ -5,7 +5,7 @@
 Random Forest, XGBoost 결과를 원격 MLflow에서 비교하기 위한 베이스라인이다.
 
 팀원은 코드를 직접 수정하지 말고
-``python -m fdshield_ml.train_xgboost --model-type ...`` 명령의 옵션만 바꿔
+``python -m fdshield_ml.training.train --model-type ...`` 명령의 옵션만 바꿔
 실행한다. 최종 모델이 결정되면 선택된 모델을 운영용 파이프라인으로 정리한다.
 """
 
@@ -21,13 +21,13 @@ import mlflow.sklearn
 import pandas as pd
 from mlflow.models import infer_signature
 
-from fdshield_ml.features import (
+from fdshield_ml.common.features import (
     FDShieldFeatureBuilder,
     feature_manifest,
     model_input_and_groups,
 )
-from fdshield_ml.tracking import configure_tracking, verify_connection
-from fdshield_ml.training import (
+from fdshield_ml.training.tracking import configure_tracking, verify_connection
+from fdshield_ml.training.pipeline import (
     TrainingConfig,
     build_pipeline,
     class_balance_weight,
@@ -311,5 +311,5 @@ def main() -> None:
         )
 
 if __name__ == "__main__":
-    # python -m fdshield_ml.train_xgboost 로 직접 실행할 때의 진입점이다.
+    # python -m fdshield_ml.training.train 로 직접 실행할 때의 진입점이다.
     main()

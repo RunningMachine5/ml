@@ -18,13 +18,13 @@ import optuna
 import pandas as pd
 from mlflow.models import infer_signature
 
-from fdshield_ml.features import (
+from fdshield_ml.common.features import (
     FDShieldFeatureBuilder,
     feature_manifest,
     model_input_and_groups,
 )
-from fdshield_ml.tracking import configure_tracking, verify_connection
-from fdshield_ml.training import (
+from fdshield_ml.training.tracking import configure_tracking, verify_connection
+from fdshield_ml.training.pipeline import (
     TrainingConfig,
     build_pipeline,
     class_balance_weight,
@@ -33,7 +33,10 @@ from fdshield_ml.training import (
     model_parameters,
     stratified_sample,
 )
-from fdshield_ml.tuning import config_from_best_params, suggest_training_config
+from fdshield_ml.training.tuning import (
+    config_from_best_params,
+    suggest_training_config,
+)
 
 
 MODEL_TYPES = (

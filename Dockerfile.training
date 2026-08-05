@@ -9,15 +9,20 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 COPY --from=uv /uv /uvx /bin/
-COPY pyproject.toml uv.lock README.md ./
+COPY pyproject.toml uv.lock ./
 
 # 실제 학습 코드 연결을 고려해 MLflow와 모델 학습 의존성을 함께 설치한다.
 RUN uv sync --frozen --no-dev --no-install-project
 
 RUN useradd --create-home --uid 10001 appuser
 
-COPY --chown=appuser:appuser fdshield_ml ./fdshield_ml
+COPY --chown=appuser:appuser \
+    fdshield_ml/__init__.py \
+    fdshield_ml/features.py \
+    ./fdshield_ml/
+COPY --chown=appuser:appuser fdshield_ml/common ./fdshield_ml/common
+COPY --chown=appuser:appuser fdshield_ml/training ./fdshield_ml/training
 
 USER appuser
 
-CMD ["python", "-m", "fdshield_ml.train_job"]
+CMD ["python", "-m", "fdshield_ml.training.job"]

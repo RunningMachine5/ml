@@ -53,8 +53,8 @@ MLflow 서버가 모델을 대신 학습하는 것은 아닙니다. 학습은 �
 | `xgboost` | 성능 비교의 주력 후보 모델 |
 
 기존 네 모델은 `--model-type`과 하이퍼파라미터만 바꿔 실행할 수 있습니다.
-새 Feature를 추가하려면 `features.py`, 새로운 모델 종류를 추가하려면
-`training.py`와 관련 테스트를 수정해야 합니다.
+새 Feature를 추가하려면 `fdshield_ml/common/features.py`, 새로운 모델 종류를
+추가하려면 `fdshield_ml/training/pipeline.py`와 관련 테스트를 수정해야 합니다.
 
 ## 최초 설정
 
@@ -89,7 +89,7 @@ MLFLOW_EXPERIMENT_NAME=fdshield-model-comparison
 Windows/Linux 공통:
 
 ```console
-uv run python -m fdshield_ml.tracking --env-file .env.tracking
+uv run python -m fdshield_ml.training.tracking --env-file .env.tracking
 ```
 
 - `401 Unauthorized`: 아이디 또는 비밀번호 확인
@@ -121,7 +121,7 @@ cp '<공유받은 경로>/train.csv' data/open/train.csv
 PowerShell:
 
 ```powershell
-uv run python -m fdshield_ml.train_xgboost `
+uv run python -m fdshield_ml.training.train `
   --env-file .env.tracking `
   --data-path data/open/train.csv `
   --model-type xgboost `
@@ -133,7 +133,7 @@ uv run python -m fdshield_ml.train_xgboost `
 명령 프롬프트(CMD):
 
 ```bat
-uv run python -m fdshield_ml.train_xgboost ^
+uv run python -m fdshield_ml.training.train ^
   --env-file .env.tracking ^
   --data-path data/open/train.csv ^
   --model-type xgboost ^
@@ -145,7 +145,7 @@ uv run python -m fdshield_ml.train_xgboost ^
 Linux/macOS/WSL (Bash):
 
 ```bash
-uv run python -m fdshield_ml.train_xgboost \
+uv run python -m fdshield_ml.training.train \
   --env-file .env.tracking \
   --data-path data/open/train.csv \
   --model-type xgboost \
@@ -200,7 +200,7 @@ MLflow에도 모델 파라미터로 기록되지 않습니다.
 PowerShell:
 
 ```powershell
-uv run python -m fdshield_ml.train_xgboost `
+uv run python -m fdshield_ml.training.train `
   --env-file .env.tracking `
   --data-path data/open/train.csv `
   --model-type logistic-regression `
@@ -211,7 +211,7 @@ uv run python -m fdshield_ml.train_xgboost `
 Linux/macOS/WSL (Bash):
 
 ```bash
-uv run python -m fdshield_ml.train_xgboost \
+uv run python -m fdshield_ml.training.train \
   --env-file .env.tracking \
   --data-path data/open/train.csv \
   --model-type logistic-regression \
@@ -232,7 +232,7 @@ uv run python -m fdshield_ml.train_xgboost \
 PowerShell:
 
 ```powershell
-uv run python -m fdshield_ml.train_xgboost `
+uv run python -m fdshield_ml.training.train `
   --env-file .env.tracking `
   --data-path data/open/train.csv `
   --model-type decision-tree `
@@ -244,7 +244,7 @@ uv run python -m fdshield_ml.train_xgboost `
 Linux/macOS/WSL (Bash):
 
 ```bash
-uv run python -m fdshield_ml.train_xgboost \
+uv run python -m fdshield_ml.training.train \
   --env-file .env.tracking \
   --data-path data/open/train.csv \
   --model-type decision-tree \
@@ -268,7 +268,7 @@ uv run python -m fdshield_ml.train_xgboost \
 PowerShell:
 
 ```powershell
-uv run python -m fdshield_ml.train_xgboost `
+uv run python -m fdshield_ml.training.train `
   --env-file .env.tracking `
   --data-path data/open/train.csv `
   --model-type random-forest `
@@ -282,7 +282,7 @@ uv run python -m fdshield_ml.train_xgboost `
 Linux/macOS/WSL (Bash):
 
 ```bash
-uv run python -m fdshield_ml.train_xgboost \
+uv run python -m fdshield_ml.training.train \
   --env-file .env.tracking \
   --data-path data/open/train.csv \
   --model-type random-forest \
@@ -311,7 +311,7 @@ uv run python -m fdshield_ml.train_xgboost \
 PowerShell:
 
 ```powershell
-uv run python -m fdshield_ml.train_xgboost `
+uv run python -m fdshield_ml.training.train `
   --env-file .env.tracking `
   --data-path data/open/train.csv `
   --model-type xgboost `
@@ -327,7 +327,7 @@ uv run python -m fdshield_ml.train_xgboost `
 CMD:
 
 ```bat
-uv run python -m fdshield_ml.train_xgboost ^
+uv run python -m fdshield_ml.training.train ^
   --env-file .env.tracking ^
   --data-path data/open/train.csv ^
   --model-type xgboost ^
@@ -343,7 +343,7 @@ uv run python -m fdshield_ml.train_xgboost ^
 Linux/macOS/WSL (Bash):
 
 ```bash
-uv run python -m fdshield_ml.train_xgboost \
+uv run python -m fdshield_ml.training.train \
   --env-file .env.tracking \
   --data-path data/open/train.csv \
   --model-type xgboost \
@@ -388,7 +388,7 @@ Optuna Study 1개 = 한 모델 종류의 전체 탐색 작업
 | Random Forest | `n_estimators`: `100`~`500`, `max_depth`: `3`~`20`, `min_samples_leaf`: `1`~`30`, `max_features`: `sqrt`/`log2` |
 | XGBoost | `n_estimators`: `100`~`600`, `max_depth`: `3`~`10`, `learning_rate`: `0.01`~`0.3`, `subsample`: `0.6`~`1.0`, `colsample_bytree`: `0.6`~`1.0`, `min_child_weight`: `1`~`20` |
 
-탐색 범위는 `fdshield_ml/tuning.py` 한 곳에서 관리합니다. 초보 팀원은 이 파일을
+탐색 범위는 `fdshield_ml/training/tuning.py` 한 곳에서 관리합니다. 초보 팀원은 이 파일을
 수정하지 말고 모델 종류, Trial 수, 표본 크기만 CLI에서 선택하면 됩니다.
 
 ### 1단계: Optuna Smoke Test
@@ -398,7 +398,7 @@ Optuna Study 1개 = 한 모델 종류의 전체 탐색 작업
 PowerShell:
 
 ```powershell
-uv run python -m fdshield_ml.tune `
+uv run python -m fdshield_ml.training.tune `
   --env-file .env.tracking `
   --data-path data/open/train.csv `
   --model-type xgboost `
@@ -410,7 +410,7 @@ uv run python -m fdshield_ml.tune `
 CMD:
 
 ```bat
-uv run python -m fdshield_ml.tune ^
+uv run python -m fdshield_ml.training.tune ^
   --env-file .env.tracking ^
   --data-path data/open/train.csv ^
   --model-type xgboost ^
@@ -422,7 +422,7 @@ uv run python -m fdshield_ml.tune ^
 Linux/macOS/WSL (Bash):
 
 ```bash
-uv run python -m fdshield_ml.tune \
+uv run python -m fdshield_ml.training.tune \
   --env-file .env.tracking \
   --data-path data/open/train.csv \
   --model-type xgboost \
@@ -439,7 +439,7 @@ Trial마다 모델 하나를 새로 학습하므로 Trial 수를 무작정 크�
 PowerShell:
 
 ```powershell
-uv run python -m fdshield_ml.tune `
+uv run python -m fdshield_ml.training.tune `
   --env-file .env.tracking `
   --data-path data/open/train.csv `
   --model-type xgboost `
@@ -450,7 +450,7 @@ uv run python -m fdshield_ml.tune `
 Linux/macOS/WSL (Bash):
 
 ```bash
-uv run python -m fdshield_ml.tune \
+uv run python -m fdshield_ml.training.tune \
   --env-file .env.tracking \
   --data-path data/open/train.csv \
   --model-type xgboost \
@@ -464,7 +464,7 @@ uv run python -m fdshield_ml.tune \
 PowerShell:
 
 ```powershell
-uv run python -m fdshield_ml.tune `
+uv run python -m fdshield_ml.training.tune `
   --env-file .env.tracking `
   --data-path data/open/train.csv `
   --model-type random-forest `
@@ -476,7 +476,7 @@ uv run python -m fdshield_ml.tune `
 Linux/macOS/WSL (Bash):
 
 ```bash
-uv run python -m fdshield_ml.tune \
+uv run python -m fdshield_ml.training.tune \
   --env-file .env.tracking \
   --data-path data/open/train.csv \
   --model-type random-forest \
@@ -617,7 +617,7 @@ MLflow 화면에 지표 옆으로 표시되는 `model` 링크는 성능 점수�
 PowerShell:
 
 ```powershell
-uv run python -m fdshield_ml.train_xgboost `
+uv run python -m fdshield_ml.training.train `
   --env-file .env.tracking `
   --data-path data/open/train.csv `
   --model-type xgboost `
@@ -628,7 +628,7 @@ uv run python -m fdshield_ml.train_xgboost `
 Linux/macOS/WSL (Bash):
 
 ```bash
-uv run python -m fdshield_ml.train_xgboost \
+uv run python -m fdshield_ml.training.train \
   --env-file .env.tracking \
   --data-path data/open/train.csv \
   --model-type xgboost \
@@ -640,14 +640,17 @@ uv run python -m fdshield_ml.train_xgboost \
 
 | 경로 | 역할 |
 |---|---|
-| `fdshield_ml/tracking.py` | MLflow 주소와 인증 설정 및 연결 확인 |
-| `fdshield_ml/features.py` | 라벨 변환, 식별자 제외, 시간 Feature 생성 |
-| `fdshield_ml/training.py` | 공통 데이터 분할, 전처리, 모델 생성 및 평가 |
-| `fdshield_ml/train_xgboost.py` | CLI 입력, 로컬 학습, MLflow 기록 실행 |
-| `fdshield_ml/tuning.py` | 모델별 Optuna 탐색 범위와 Best 설정 복원 |
-| `fdshield_ml/tune.py` | Optuna Study 실행, Trial 및 Best 모델 MLflow 기록 |
+| `fdshield_ml/common/feature_contract.py` | 학습·추론이 공유하는 원본 입력 컬럼 계약 |
+| `fdshield_ml/common/features.py` | 라벨 변환, 식별자 제외, 시간 Feature 생성 |
+| `fdshield_ml/serving/main.py` | 로컬 Docker와 Cloud Run Service 실행 진입점 |
 | `fdshield_ml/serving/app.py` | Backend가 호출하는 FastAPI 추론 API |
 | `fdshield_ml/serving/predictor.py` | 실제 모델 교체 전 규칙 기반 Stub 예측기 |
+| `fdshield_ml/training/job.py` | Cloud Run Training Job 실행 진입점 |
+| `fdshield_ml/training/tracking.py` | MLflow 주소와 인증 설정 및 연결 확인 |
+| `fdshield_ml/training/pipeline.py` | 공통 데이터 분할, 전처리, 모델 생성 및 평가 |
+| `fdshield_ml/training/train.py` | CLI 입력, 로컬 학습, MLflow 기록 실행 |
+| `fdshield_ml/training/tuning.py` | 모델별 Optuna 탐색 범위와 Best 설정 복원 |
+| `fdshield_ml/training/tune.py` | Optuna Study 실행, Trial 및 Best 모델 MLflow 기록 |
 | `tests/test_training.py` | 가짜 데이터로 전체 학습 흐름 검증 |
 | `tests/test_tuning.py` | 모델별 탐색 범위와 Best 설정 복원 검증 |
 | `tests/test_serving.py` | 상태 확인, 요청 검증, Stub 추론 계약 검증 |
@@ -690,7 +693,7 @@ Python을 생성하지 않습니다.
 ```
 
 위 예시는 구조를 줄여 쓴 것이며 실제 요청의 `features`에는
-`fdshield_ml/serving/feature_contract.py`에 정의한 55개 컬럼이 모두 필요합니다.
+`fdshield_ml/common/feature_contract.py`에 정의한 55개 컬럼이 모두 필요합니다.
 현재 Stub 응답의 `shap`은 실제 SHAP가 아니라 원본 컬럼 이름을 사용한 임시
 기여도입니다.
 
@@ -752,4 +755,45 @@ docker run --rm --env-file .env.training fdshield/ml-training:local
 | `MLFLOW_EXPERIMENT_NAME` | `fdshield-binary-training` | 추후 학습 결과를 기록할 MLflow Experiment |
 
 현재 Stub은 MLflow에 접속하거나 실제 모델을 학습하지 않습니다. Cloud Run Job 실행
-구조를 검증한 뒤 GCS 데이터 다운로드와 기존 `train_xgboost` 학습 흐름을 연결합니다.
+구조를 검증한 뒤 GCS 데이터 다운로드와 기존 `training.train` 학습 흐름을 연결합니다.
+
+### Training 이미지 Cloud Build
+
+`cloudbuild.training.yaml`은 Serving용 `Dockerfile.serving`이 아니라
+`Dockerfile.training`을 사용해 Training 이미지만 빌드하고 Artifact Registry에
+업로드합니다. 이미지 태그는 실행 시 `_DEPLOY_IMAGE` substitution으로 명시합니다.
+
+```console
+DEPLOY_IMAGE="asia-northeast3-docker.pkg.dev/project-4cc3406c-72d8-4907-a5d/fdshield/ml-training:manual"
+
+gcloud builds submit \
+  --project="project-4cc3406c-72d8-4907-a5d" \
+  --config="cloudbuild.training.yaml" \
+  --substitutions="_DEPLOY_IMAGE=${DEPLOY_IMAGE}" \
+  .
+```
+
+이 설정은 이미지를 빌드하고 업로드하는 역할만 합니다. Cloud Run Job 생성과 학습
+실행은 별도 단계이며, 이미지 업로드만으로 학습이 자동 시작되지는 않습니다.
+
+### Serving·Training 이미지 변경 범위
+
+Python 테스트는 모든 Pull Request에서 실행합니다. Docker 이미지 빌드는 변경된
+파일이 실제 이미지에 포함되는 경우에만 실행합니다.
+
+Serving 배포에서는 `cloudbuild.serving.yaml`이 `Dockerfile.serving`을 지정하고,
+Training 이미지 빌드에서는 `cloudbuild.training.yaml`이
+`Dockerfile.training`을 지정합니다.
+
+| 변경 영역 | Serving 이미지 CI | Training 이미지 CI |
+|---|---:|---:|
+| `fdshield_ml/serving/**`, Serving Dockerfile·의존성 | 실행 | 생략 |
+| `fdshield_ml/training/**`, Training Dockerfile·의존성 | 생략 | 실행 |
+| `fdshield_ml/common/**`, 호환 모듈, `.dockerignore` | 실행 | 실행 |
+| 테스트·문서만 변경 | 생략 | 생략 |
+
+`Dockerfile.serving`은 `common/`과 `serving/`을 복사하고,
+`Dockerfile.training`은
+`common/`과 `training/`을 복사합니다. 따라서 한 영역의 코드 변경이 다른 이미지의
+불필요한 재빌드로 이어지지 않습니다. Serving Cloud Run CD도 같은 경로 조건을
+사용합니다.

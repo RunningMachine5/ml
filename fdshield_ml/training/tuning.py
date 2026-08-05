@@ -2,7 +2,7 @@
 
 수동 학습과 자동 튜닝이 서로 다른 모델 설정을 만들지 않도록, Optuna Trial이
 제안한 값을 기존 :class:`TrainingConfig`에 반영하는 역할만 담당한다. 데이터
-분할·Feature 처리·평가는 ``training.py``의 공통 함수를 그대로 사용한다.
+분할·Feature 처리·평가는 ``pipeline.py``의 공통 함수를 그대로 사용한다.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from typing import Mapping
 
 import optuna
 
-from fdshield_ml.training import TrainingConfig
+from fdshield_ml.training.pipeline import TrainingConfig
 
 
 def suggest_training_config(
