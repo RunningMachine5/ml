@@ -53,12 +53,50 @@ jobs:
         env:
           DEPLOY_IMAGE: ${{ env.IMAGE_NAME }}:${{ github.sha }}
         run: |
-          gcloud builds submit \
-            --project="$GCP_PROJECT_ID" \
-            --tag="$DEPLOY_IMAGE" \
-            --suppress-logs \
-            --quiet \
-            .
+          build_id="$(
+            gcloud builds submit \
+              --project="$GCP_PROJECT_ID" \
+              --tag="$DEPLOY_IMAGE" \
+              --async \
+              --format="value(id)" \
+              --quiet \
+              .
+          )"
+
+          if [[ -z "$build_id" ]]; then
+            echo "Cloud Build did not return a build ID."
+            exit 1
+          fi
+
+          echo "Cloud Build submitted: $build_id"
+          build_status=""
+
+          for attempt in $(seq 1 120); do
+            build_status="$(
+              gcloud builds describe "$build_id" \
+                --project="$GCP_PROJECT_ID" \
+                --format="value(status)"
+            )"
+
+            echo "Cloud Build status ($attempt/120): $build_status"
+
+            case "$build_status" in
+              SUCCESS)
+                break
+                ;;
+              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
+                echo "Cloud Build failed: $build_status"
+                exit 1
+                ;;
+            esac
+
+            sleep 5
+          done
+
+          if [[ "$build_status" != "SUCCESS" ]]; then
+            echo "Cloud Build status check timed out."
+            exit 1
+          fi
 
       - name: Deploy image to Cloud Run
         env:
