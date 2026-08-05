@@ -721,3 +721,35 @@ docker compose -f compose.serving.yml up --build
 컨테이너는 `http://localhost:8001`에서 요청을 받고, Cloud Run에서도 같은 이미지를
 사용할 수 있도록 내부 포트는 `PORT=8080`으로 실행됩니다. 현재 Docker 실행 경로는
 MLflow와 연결하지 않으며 항상 `StubPredictor`를 사용합니다.
+
+## Cloud Run Training Job 스켈레톤
+
+실제 데이터 다운로드와 모델 학습을 연결하기 전에는 Training Job 컨테이너의 실행,
+환경변수 전달, 로그 수집, 종료 코드만 확인하는 Stub을 사용합니다. 로컬 설정 파일은
+`.env.training.example`을 복사해 준비합니다.
+
+```console
+Copy-Item .env.training.example .env.training
+```
+
+학습용 이미지를 빌드하고 실행합니다.
+
+```console
+docker build -f Dockerfile.training -t fdshield/ml-training:local .
+docker run --rm --env-file .env.training fdshield/ml-training:local
+```
+
+정상 실행되면 `training_job_started`, `training_job_completed` JSON 로그를 출력하고
+종료 코드 `0`을 반환합니다. 필수 설정이 없거나 지원하지 않는 값이면
+`training_job_configuration_error` 로그와 종료 코드 `2`를 반환합니다.
+
+현재 지원하는 설정은 다음과 같습니다.
+
+| 환경변수 | 현재 값 | 역할 |
+|---|---|---|
+| `TRAINING_JOB_TYPE` | `binary` | 실행할 학습 작업 종류 |
+| `TRAINING_DATA_URI` | `stub://local-data` | Stub 데이터 위치, 추후 `gs://` 사용 |
+| `MLFLOW_EXPERIMENT_NAME` | `fdshield-binary-training` | 추후 학습 결과를 기록할 MLflow Experiment |
+
+현재 Stub은 MLflow에 접속하거나 실제 모델을 학습하지 않습니다. Cloud Run Job 실행
+구조를 검증한 뒤 GCS 데이터 다운로드와 기존 `train_xgboost` 학습 흐름을 연결합니다.
