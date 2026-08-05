@@ -1,13 +1,10 @@
-"""모델 서빙 API의 현재 공개 데이터 기준 요청·응답 계약."""
+"""모델 서빙 API의 임시 요청·응답 계약."""
 
 from typing import Self
 
 from pydantic import BaseModel, Field, model_validator
 
-from fdshield_ml.serving.feature_contract import (
-    FORBIDDEN_INFERENCE_COLUMNS,
-    MODEL_INPUT_COLUMN_SET,
-)
+from fdshield_ml.serving.feature_contract import FORBIDDEN_INFERENCE_COLUMNS
 
 
 FeatureValue = str | int | float | bool | None
@@ -21,22 +18,12 @@ class PredictionRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_feature_contract(self) -> Self:
-        """현재 학습 모델과 동일한 55개 원본 컬럼인지 검사한다."""
+        """입력 확정 전에는 데이터 누수·민감 식별 컬럼만 차단한다."""
 
         provided = set(self.features)
         forbidden = sorted(provided & FORBIDDEN_INFERENCE_COLUMNS)
-        missing = sorted(MODEL_INPUT_COLUMN_SET - provided)
-        unexpected = sorted(provided - MODEL_INPUT_COLUMN_SET)
-
-        details = []
         if forbidden:
-            details.append(f"forbidden={forbidden}")
-        if missing:
-            details.append(f"missing={missing}")
-        if unexpected:
-            details.append(f"unexpected={unexpected}")
-        if details:
-            raise ValueError("Invalid inference features: " + ", ".join(details))
+            raise ValueError(f"Invalid inference features: forbidden={forbidden}")
         return self
 
 

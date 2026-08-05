@@ -121,7 +121,7 @@ def test_predict_rejects_missing_feature_container() -> None:
     assert response.status_code == 422
 
 
-def test_predict_rejects_incomplete_transaction_features() -> None:
+def test_predict_accepts_partial_transaction_features() -> None:
     client = TestClient(create_app())
 
     response = client.post(
@@ -132,7 +132,25 @@ def test_predict_rejects_incomplete_transaction_features() -> None:
         },
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 200
+    assert response.json()["fraud_probability"] == 0.1
+    assert response.json()["shap"] == {"Transaction_Amount": 0.05}
+
+
+def test_predict_accepts_unknown_temporary_features() -> None:
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/predict",
+        json={
+            "transaction_id": "TEST_DRAFT_001",
+            "features": {"new_transaction_field": "draft-value"},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["fraud_probability"] == 0.05
+    assert response.json()["shap"] == {}
 
 
 def test_predict_rejects_training_label_and_identifiers() -> None:
