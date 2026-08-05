@@ -3,8 +3,8 @@ from __future__ import annotations
 import optuna
 import pytest
 
-from fdshield_ml.training import TrainingConfig
-from fdshield_ml.tuning import config_from_best_params, suggest_training_config
+from fdshield_ml.training.pipeline import TrainingConfig
+from fdshield_ml.training.tuning import config_from_best_params, suggest_training_config
 
 
 @pytest.mark.parametrize(

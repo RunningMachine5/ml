@@ -6,13 +6,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from fdshield_ml.features import (
+import fdshield_ml.features as legacy_features
+from fdshield_ml.common.features import (
     EXCLUDED_FEATURE_COLUMNS,
     FDShieldFeatureBuilder,
     binary_target,
     model_input_and_groups,
 )
-from fdshield_ml.training import (
+from fdshield_ml.training.pipeline import (
     TrainingConfig,
     build_pipeline,
     class_balance_weight,
@@ -20,6 +21,10 @@ from fdshield_ml.training import (
     group_train_validation_split,
     model_parameters,
 )
+
+
+def test_legacy_feature_module_reexports_common_transformer() -> None:
+    assert legacy_features.FDShieldFeatureBuilder is FDShieldFeatureBuilder
 
 
 def synthetic_frame(group_count: int = 40, rows_per_group: int = 5) -> pd.DataFrame:

@@ -1,4 +1,4 @@
-name: ML Serving CI
+name: ML CI
 
 on:
   pull_request:
@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ml-serving-ci-${{ github.ref }}
+  group: ml-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -30,6 +30,3 @@ jobs:
 
       - name: Run tests
         run: uv run python -m pytest
-
-      - name: Build ML Serving image
-        run: docker build --tag fdshield-ml-serving:ci .

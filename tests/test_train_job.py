@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from fdshield_ml.train_job import TrainingJobConfig, main
+from fdshield_ml.training.job import TrainingJobConfig, main
 
 
 VALID_ENV = {

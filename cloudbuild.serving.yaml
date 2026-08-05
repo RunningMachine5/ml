@@ -1,0 +1,15 @@
+steps:
+  - id: build-serving-image
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file
+      - Dockerfile.serving
+      - --tag
+      - ${_DEPLOY_IMAGE}
+      - .
+
+images:
+  - ${_DEPLOY_IMAGE}
+
+timeout: 1200s

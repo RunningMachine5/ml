@@ -4,7 +4,7 @@ from typing import Self
 
 from pydantic import BaseModel, Field, model_validator
 
-from fdshield_ml.serving.feature_contract import FORBIDDEN_INFERENCE_COLUMNS
+from fdshield_ml.common.feature_contract import FORBIDDEN_INFERENCE_COLUMNS
 
 
 FeatureValue = str | int | float | bool | None

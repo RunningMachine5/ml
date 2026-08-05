@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from fdshield_ml.serving.app import create_app
-from fdshield_ml.serving.feature_contract import MODEL_INPUT_COLUMNS
+from fdshield_ml.common.feature_contract import MODEL_INPUT_COLUMNS
 from fdshield_ml.serving.predictor import StubPredictor
 
 

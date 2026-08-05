@@ -11,16 +11,21 @@ WORKDIR /app
 COPY --from=uv /uv /uvx /bin/
 COPY deploy/serving-requirements.txt ./deploy/serving-requirements.txt
 
-# Stub 이미지에는 학습·MLflow 패키지를 넣지 않고 API 실행 의존성만 설치한다.
+# Serving 이미지에는 학습·MLflow 패키지를 넣지 않고 API 실행 의존성만 설치한다.
 RUN uv pip install --system --no-cache \
     --requirement deploy/serving-requirements.txt
 
 RUN useradd --create-home --uid 10001 appuser
 
-COPY --chown=appuser:appuser fdshield_ml ./fdshield_ml
+COPY --chown=appuser:appuser \
+    fdshield_ml/__init__.py \
+    fdshield_ml/features.py \
+    ./fdshield_ml/
+COPY --chown=appuser:appuser fdshield_ml/common ./fdshield_ml/common
+COPY --chown=appuser:appuser fdshield_ml/serving ./fdshield_ml/serving
 
 USER appuser
 
 EXPOSE 8080
 
-CMD ["python", "-m", "fdshield_ml.serve"]
+CMD ["python", "-m", "fdshield_ml.serving.main"]
