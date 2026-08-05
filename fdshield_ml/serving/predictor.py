@@ -14,7 +14,7 @@ class Predictor(Protocol):
 
 
 class StubPredictor:
-    """실제 모델을 연결하기 전 원본 컬럼으로 동작하는 결정적 Stub."""
+    """입력 계약 확정 전 일부 위험 신호만 사용하는 결정적 Stub."""
 
     def __init__(
         self,
@@ -44,39 +44,39 @@ class StubPredictor:
         )
 
     def predict(self, request: PredictionRequest) -> PredictionResponse:
-        """현재 공개 데이터의 일부 위험 신호로 재현 가능한 결과를 반환한다."""
+        """전달된 위험 신호만 사용하고 모르는 컬럼은 안전하게 무시한다."""
 
         features = request.features
-        amount = abs(_as_float(features["Transaction_Amount"]))
+        amount = abs(_as_float(features.get("Transaction_Amount")))
         standard_deviation = max(
-            abs(_as_float(features["Account_one_month_std_dev"])),
+            abs(_as_float(features.get("Account_one_month_std_dev"))),
             1.0,
         )
         deviation_ratio = amount / standard_deviation
 
         # 아래 값은 실제 SHAP가 아니라 API 연결을 확인하기 위한 임시 기여도다.
-        contributions = {
-            "Transaction_Amount": (
+        contributions: dict[str, float] = {}
+        if "Transaction_Amount" in features:
+            contributions["Transaction_Amount"] = (
                 0.35 if amount >= 10_000_000 else 0.20 if amount >= 1_000_000 else 0.05
-            ),
-            "Account_one_month_std_dev": (
+            )
+        if "Account_one_month_std_dev" in features:
+            contributions["Account_one_month_std_dev"] = (
                 0.25 if deviation_ratio >= 100 else 0.10 if deviation_ratio >= 10 else 0.0
-            ),
-            "Customer_VPN_Indicator": (
-                0.15 if _is_enabled(features["Customer_VPN_Indicator"]) else 0.0
-            ),
-            "Unused_terminal_status": (
-                0.15 if _is_enabled(features["Unused_terminal_status"]) else 0.0
-            ),
-            "Recipient_account_suspend_status": (
-                0.10
-                if _is_enabled(features["Recipient_account_suspend_status"])
-                else 0.0
-            ),
-            "Transaction_Failure_Status": (
-                0.05 if _is_enabled(features["Transaction_Failure_Status"]) else 0.0
-            ),
+            )
+
+        indicator_weights = {
+            "Customer_VPN_Indicator": 0.15,
+            "Unused_terminal_status": 0.15,
+            "Recipient_account_suspend_status": 0.10,
+            "Transaction_Failure_Status": 0.05,
         }
+        for feature_name, weight in indicator_weights.items():
+            if feature_name in features:
+                contributions[feature_name] = (
+                    weight if _is_enabled(features[feature_name]) else 0.0
+                )
+
         probability = round(min(0.05 + sum(contributions.values()), 0.99), 2)
 
         return PredictionResponse(
