@@ -646,8 +646,11 @@ uv run python -m fdshield_ml.train_xgboost \
 | `fdshield_ml/train_xgboost.py` | CLI 입력, 로컬 학습, MLflow 기록 실행 |
 | `fdshield_ml/tuning.py` | 모델별 Optuna 탐색 범위와 Best 설정 복원 |
 | `fdshield_ml/tune.py` | Optuna Study 실행, Trial 및 Best 모델 MLflow 기록 |
+| `fdshield_ml/serving/app.py` | Backend가 호출하는 FastAPI 추론 API |
+| `fdshield_ml/serving/predictor.py` | 실제 모델 교체 전 규칙 기반 Stub 예측기 |
 | `tests/test_training.py` | 가짜 데이터로 전체 학습 흐름 검증 |
 | `tests/test_tuning.py` | 모델별 탐색 범위와 Best 설정 복원 검증 |
+| `tests/test_serving.py` | 상태 확인, 요청 검증, Stub 추론 계약 검증 |
 
 코드를 수정했다면 테스트를 실행합니다.
 
@@ -663,3 +666,58 @@ Python을 생성하지 않습니다.
 
 공통 데이터 분할과 평가 방식을 임의로 변경하면 다른 팀원의 Run과 공정하게 비교할
 수 없으므로, 변경이 필요한 경우 팀에서 먼저 기준을 합의합니다.
+
+## ML 서빙 스켈레톤 실행
+
+실제 모델 파일을 연결하기 전에는 현재 공개 데이터에서 모델이 사용하는 원본 55개
+컬럼을 받는 결정적 규칙 기반 Stub이 실행됩니다. 요청은 `transaction_id`와
+`features`로 구성하며, `features`의 이름과 값은 학습 Pipeline에 들어가는 원본 형태를
+유지합니다. 정답 라벨 `Fraud_Type`과 현재 모델에서 제외한 식별정보는 받지 않습니다.
+같은 요청은 항상 같은 결과를 반환하므로 Backend 연동과 시연 흐름을 먼저 검증할 수
+있습니다.
+
+```json
+{
+  "transaction_id": "TEST_000001",
+  "features": {
+    "Customer_Birthyear": 1960,
+    "Customer_Gender": "female",
+    "Transaction_Datetime": "2003-01-11 20:29:36",
+    "Transaction_Amount": -9450000,
+    "Channel": "mobile"
+  }
+}
+```
+
+위 예시는 구조를 줄여 쓴 것이며 실제 요청의 `features`에는
+`fdshield_ml/serving/feature_contract.py`에 정의한 55개 컬럼이 모두 필요합니다.
+현재 Stub 응답의 `shap`은 실제 SHAP가 아니라 원본 컬럼 이름을 사용한 임시
+기여도입니다.
+
+```console
+uv run uvicorn fdshield_ml.serving.app:app --host 0.0.0.0 --port 8001
+```
+
+실행 후 API 문서는 `http://localhost:8001/docs`에서 확인합니다. 상태 확인은
+`GET /health`, 준비 상태는 `GET /ready`, 추론은 `POST /predict`를 사용합니다.
+
+서빙 설정은 다음 환경변수로 변경할 수 있습니다.
+
+| 환경변수 | 기본값 | 역할 |
+|---|---|---|
+| `ML_FRAUD_THRESHOLD` | `0.55` | 사기로 판정할 확률 임계값 |
+| `ML_MODEL_NAME` | `fdshield-rule-based-stub` | 응답에 표시할 모델 이름 |
+| `ML_MODEL_VERSION` | `0` | 응답에 표시할 Stub 버전 |
+
+실제 모델을 연결할 때는 MLflow에 저장된 전처리 포함 Pipeline을 로드하고,
+`StubPredictor`만 실제 예측기 구현으로 교체합니다.
+
+Docker로 Stub 서버를 실행할 때는 다음 명령을 사용합니다.
+
+```console
+docker compose -f compose.serving.yml up --build
+```
+
+컨테이너는 `http://localhost:8001`에서 요청을 받고, Cloud Run에서도 같은 이미지를
+사용할 수 있도록 내부 포트는 `PORT=8080`으로 실행됩니다. 현재 Docker 실행 경로는
+MLflow와 연결하지 않으며 항상 `StubPredictor`를 사용합니다.
