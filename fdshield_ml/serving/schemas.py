@@ -1,34 +1,49 @@
-"""모델 서빙 API의 임시 요청·응답 계약."""
+"""모델 서빙 API의 현재 공개 데이터 기준 요청·응답 계약."""
 
-from datetime import datetime
+from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field, model_validator
+
+from fdshield_ml.serving.feature_contract import (
+    FORBIDDEN_INFERENCE_COLUMNS,
+    MODEL_INPUT_COLUMN_SET,
+)
 
 
-class TransactionFeatures(BaseModel):
-    """현재 Backend 거래 DTO에서 모델 추론에 사용하는 필드."""
-
-    # 최종 피처가 확정되기 전까지 새 필드를 허용해 Skeleton 간 연동을 막지 않는다.
-    model_config = ConfigDict(extra="allow")
-
-    transaction_time: datetime
-    amount: int = Field(ge=0)
-    user_amount_std_dev: float = Field(gt=0.0)
-    payment_method: str
-    merchant_category: str
+FeatureValue = str | int | float | bool | None
 
 
 class PredictionRequest(BaseModel):
-    """백엔드가 모델 서버에 전달하는 거래 한 건."""
+    """백엔드가 모델 서버에 전달하는 원본 거래 Feature 한 건."""
 
-    user_id: str
-    features: TransactionFeatures
+    transaction_id: str = Field(min_length=1)
+    features: dict[str, FeatureValue] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_feature_contract(self) -> Self:
+        """현재 학습 모델과 동일한 55개 원본 컬럼인지 검사한다."""
+
+        provided = set(self.features)
+        forbidden = sorted(provided & FORBIDDEN_INFERENCE_COLUMNS)
+        missing = sorted(MODEL_INPUT_COLUMN_SET - provided)
+        unexpected = sorted(provided - MODEL_INPUT_COLUMN_SET)
+
+        details = []
+        if forbidden:
+            details.append(f"forbidden={forbidden}")
+        if missing:
+            details.append(f"missing={missing}")
+        if unexpected:
+            details.append(f"unexpected={unexpected}")
+        if details:
+            raise ValueError("Invalid inference features: " + ", ".join(details))
+        return self
 
 
 class PredictionResponse(BaseModel):
     """모델 서버가 백엔드에 반환하는 이진 분류 결과."""
 
-    user_id: str
+    transaction_id: str
     is_fraud: bool
     fraud_probability: float = Field(ge=0.0, le=1.0)
     shap: dict[str, float] = Field(default_factory=dict)
