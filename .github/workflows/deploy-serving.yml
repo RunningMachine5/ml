@@ -110,26 +110,44 @@ jobs:
 
       - name: Verify deployed revision readiness
         run: |
-          service_url="$(
-            gcloud run services describe "$CLOUD_RUN_SERVICE" \
-              --project="$GCP_PROJECT_ID" \
-              --region="$GCP_REGION" \
-              --format='value(status.url)'
-          )"
-          test -n "$service_url"
-
           for attempt in $(seq 1 12); do
-            if curl --fail --silent --show-error \
-              --max-time 10 \
-              "$service_url/ready"; then
-              echo
-              echo "ML Serving readiness check succeeded: $service_url/ready"
+            read -r ready_status latest_created_revision latest_ready_revision < <(
+              gcloud run services describe "$CLOUD_RUN_SERVICE" \
+                --project="$GCP_PROJECT_ID" \
+                --region="$GCP_REGION" \
+                --format=json \
+                | python3 -c '
+          import json
+          import sys
+
+          status = json.load(sys.stdin).get("status", {})
+          ready_status = next(
+              (
+                  condition.get("status", "")
+                  for condition in status.get("conditions", [])
+                  if condition.get("type") == "Ready"
+              ),
+              "",
+          )
+          print(
+              ready_status,
+              status.get("latestCreatedRevisionName", ""),
+              status.get("latestReadyRevisionName", ""),
+          )
+          '
+            )
+
+            if [[ "$ready_status" == "True" \
+              && -n "$latest_created_revision" \
+              && "$latest_created_revision" == "$latest_ready_revision" ]]; then
+              echo "Cloud Run revision is ready: $latest_ready_revision"
               exit 0
             fi
 
-            echo "ML Serving is not ready yet ($attempt/12); retrying in 5 seconds."
+            echo "Cloud Run revision is not ready yet ($attempt/12)."
+            echo "Ready=$ready_status, created=$latest_created_revision, ready_revision=$latest_ready_revision"
             sleep 5
           done
 
-          echo "ML Serving readiness check failed: $service_url/ready"
+          echo "Cloud Run revision readiness check failed."
           exit 1
