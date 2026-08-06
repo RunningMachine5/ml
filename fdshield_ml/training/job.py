@@ -18,14 +18,23 @@ from typing import TextIO
 
 from fdshield_ml.training.data_loader import (
     TrainingDataError,
+    TrainingDataSummary,
     data_source_type,
     inspect_training_csv,
     materialize_training_data,
+)
+from fdshield_ml.training.job_tracking import (
+    TrainingTrackingError,
+    log_data_validation_run,
 )
 
 
 SUPPORTED_JOB_TYPES = frozenset({"binary"})
 TrainingDataMaterializer = Callable[[str], AbstractContextManager[Path]]
+ValidationRunLogger = Callable[
+    [str, str, str, str, TrainingDataSummary],
+    str,
+]
 
 
 @dataclass(frozen=True)
@@ -94,8 +103,9 @@ def run_data_validation(
     config: TrainingJobConfig,
     stream: TextIO = sys.stdout,
     materializer: TrainingDataMaterializer = materialize_training_data,
+    validation_run_logger: ValidationRunLogger = log_data_validation_run,
 ) -> None:
-    """로컬 또는 GCS CSV를 준비하고 개인정보 없이 요약만 기록한다."""
+    """로컬 또는 GCS CSV를 검증하고 요약을 MLflow에 기록한다."""
 
     source_type = data_source_type(config.data_uri)
     _write_event(
@@ -115,6 +125,19 @@ def run_data_validation(
         data_uri=config.data_uri,
         source_type=source_type,
     )
+    run_id = validation_run_logger(
+        config.job_type,
+        config.data_uri,
+        config.experiment_name,
+        source_type,
+        summary,
+    )
+    _write_event(
+        stream,
+        "training_validation_tracked",
+        experiment_name=config.experiment_name,
+        run_id=run_id,
+    )
     _write_event(
         stream,
         "training_job_completed",
@@ -129,6 +152,7 @@ def main(
     stdout: TextIO = sys.stdout,
     stderr: TextIO = sys.stderr,
     materializer: TrainingDataMaterializer = materialize_training_data,
+    validation_run_logger: ValidationRunLogger = log_data_validation_run,
 ) -> int:
     """환경변수를 검증하고 성공 여부를 프로세스 종료 코드로 반환한다."""
 
@@ -137,7 +161,15 @@ def main(
         if data_source_type(config.data_uri) == "stub":
             run_stub(config, stdout)
         else:
-            run_data_validation(config, stdout, materializer)
+            run_data_validation(
+                config,
+                stdout,
+                materializer,
+                validation_run_logger,
+            )
+    except TrainingTrackingError as error:
+        _write_event(stderr, "training_tracking_error", message=str(error))
+        return 4
     except TrainingDataError as error:
         _write_event(stderr, "training_data_error", message=str(error))
         return 3

@@ -9,7 +9,9 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from fdshield_ml.training.data_loader import TrainingDataSummary
 from fdshield_ml.training.job import TrainingJobConfig, main
+from fdshield_ml.training.job_tracking import TrainingTrackingError
 
 
 VALID_ENV = {
@@ -17,6 +19,16 @@ VALID_ENV = {
     "TRAINING_DATA_URI": "stub://local-data",
     "MLFLOW_EXPERIMENT_NAME": "fdshield-binary-training",
 }
+
+
+def successful_validation_run_logger(
+    job_type: str,
+    data_uri: str,
+    experiment_name: str,
+    source_type: str,
+    summary: TrainingDataSummary,
+) -> str:
+    return "test-run-id"
 
 
 def test_training_job_config_reads_required_environment() -> None:
@@ -102,7 +114,12 @@ def test_training_job_main_validates_local_csv(tmp_path: Path) -> None:
     stdout = io.StringIO()
     stderr = io.StringIO()
 
-    exit_code = main(environ, stdout=stdout, stderr=stderr)
+    exit_code = main(
+        environ,
+        stdout=stdout,
+        stderr=stderr,
+        validation_run_logger=successful_validation_run_logger,
+    )
     events = [json.loads(line) for line in stdout.getvalue().splitlines()]
 
     assert exit_code == 0
@@ -110,13 +127,16 @@ def test_training_job_main_validates_local_csv(tmp_path: Path) -> None:
     assert [event["event"] for event in events] == [
         "training_job_started",
         "training_data_validated",
+        "training_validation_tracked",
         "training_job_completed",
     ]
     assert events[0]["source_type"] == "local"
     assert events[1]["row_count"] == 2
     assert events[1]["normal_count"] == 1
     assert events[1]["fraud_count"] == 1
-    assert events[2]["mode"] == "data-validation"
+    assert events[2]["experiment_name"] == "fdshield-binary-training"
+    assert events[2]["run_id"] == "test-run-id"
+    assert events[3]["mode"] == "data-validation"
 
 
 def test_training_job_main_reports_data_error() -> None:
@@ -132,3 +152,37 @@ def test_training_job_main_reports_data_error() -> None:
     assert [event["event"] for event in events] == ["training_job_started"]
     assert events[0]["source_type"] == "local"
     assert error["event"] == "training_data_error"
+
+
+def test_training_job_main_reports_tracking_error(tmp_path: Path) -> None:
+    source = tmp_path / "train.csv"
+    pd.DataFrame(
+        {
+            "Account_account_number": ["account-1", "account-2"],
+            "Fraud_Type": ["m", "a"],
+        }
+    ).to_csv(source, index=False)
+    environ = {**VALID_ENV, "TRAINING_DATA_URI": str(source)}
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    def failed_validation_run_logger(
+        job_type: str,
+        data_uri: str,
+        experiment_name: str,
+        source_type: str,
+        summary: TrainingDataSummary,
+    ) -> str:
+        raise TrainingTrackingError("MLflow is unavailable.")
+
+    exit_code = main(
+        environ,
+        stdout=stdout,
+        stderr=stderr,
+        validation_run_logger=failed_validation_run_logger,
+    )
+    error = json.loads(stderr.getvalue())
+
+    assert exit_code == 4
+    assert error["event"] == "training_tracking_error"
+    assert "MLflow is unavailable" in error["message"]

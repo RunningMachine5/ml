@@ -729,8 +729,9 @@ MLflow와 연결하지 않으며 항상 `StubPredictor`를 사용합니다.
 
 Training Job은 같은 환경변수로 로컬 파일과 GCS 객체를 선택합니다. 로컬에서는
 `data/open/train.csv`를 직접 읽고, Cloud Run에서는 GCS 객체를 컨테이너의 임시
-디렉터리로 내려받은 뒤 같은 CSV 검증 로직을 실행합니다. 아직 모델 학습과 MLflow
-기록은 실행하지 않고 데이터 입력 경로만 검증합니다.
+디렉터리로 내려받은 뒤 같은 CSV 검증 로직을 실행합니다. 실제 모델은 학습하지
+않지만, 검증 결과를 MLflow Run으로 기록해 GCS부터 Tracking Server까지의 연결을
+확인합니다.
 
 ```text
 로컬 실행     TRAINING_DATA_URI=data/open/train.csv
@@ -750,7 +751,7 @@ Copy-Item .env.training.example .env.training
 Python으로 로컬 파일 검증만 실행할 수 있습니다.
 
 ```console
-uv run python -m fdshield_ml.training.job
+uv run --env-file .env.training python -m fdshield_ml.training.job
 ```
 
 학습용 이미지를 빌드하고 실행할 때는 Git에서 제외된 데이터 디렉터리를 읽기 전용으로
@@ -766,12 +767,13 @@ docker run --rm `
 ```
 
 정상 실행되면 `training_job_started`, `training_data_validated`,
-`training_job_completed` JSON 로그를 출력하고 종료 코드 `0`을 반환합니다. 로그에는
-행·컬럼 수, 정상·사기 라벨 수, 파일 크기만 남기고 거래 원문과 계좌번호는 남기지
-않습니다.
+`training_validation_tracked`, `training_job_completed` JSON 로그를 출력하고 종료 코드
+`0`을 반환합니다. MLflow에는 데이터 경로와 행·컬럼 수, 정상·사기 라벨 수, 파일
+크기 및 요약 JSON만 기록하며 거래 원문과 계좌번호는 올리지 않습니다.
 
 - 필수 설정이 없거나 지원하지 않는 URI이면 `training_job_configuration_error`, 종료 코드 `2`
 - 파일 다운로드, CSV 형식, 필수 컬럼 또는 라벨에 문제가 있으면 `training_data_error`, 종료 코드 `3`
+- MLflow 설정, 인증, 네트워크 또는 Run 기록에 문제가 있으면 `training_tracking_error`, 종료 코드 `4`
 
 현재 지원하는 설정은 다음과 같습니다.
 
@@ -779,11 +781,15 @@ docker run --rm `
 |---|---|---|---|
 | `TRAINING_JOB_TYPE` | `binary` | `binary` | 실행할 학습 작업 종류 |
 | `TRAINING_DATA_URI` | `data/open/train.csv` | `gs://fdshield-ml-data-801817539291/datasets/open/v1/train.csv` | 학습 CSV 위치 |
-| `MLFLOW_EXPERIMENT_NAME` | `fdshield-binary-training` | `fdshield-binary-training` | 추후 학습 결과를 기록할 MLflow Experiment |
+| `MLFLOW_TRACKING_URI` | `https://mlflow.fdshield.cloud` | `https://mlflow.fdshield.cloud` | MLflow Tracking Server 주소 |
+| `MLFLOW_TRACKING_USERNAME` | 로컬 전용 계정 | Secret Manager 주입 | MLflow Basic Auth 사용자 |
+| `MLFLOW_TRACKING_PASSWORD` | 로컬 비밀번호 | Secret Manager 주입 | MLflow Basic Auth 비밀번호 |
+| `MLFLOW_EXPERIMENT_NAME` | `fdshield-binary-training` | `fdshield-binary-training` | 검증 Run을 기록할 MLflow Experiment |
 
-`stub://...` 값도 기존 인프라 실행 확인용으로 계속 지원합니다. 현재 단계는 MLflow에
-접속하거나 실제 모델을 학습하지 않습니다. 다음 단계에서 검증된 파일 경로를 기존
-`training.train` 학습 흐름에 전달합니다.
+`stub://...` 값도 기존 인프라 실행 확인용으로 계속 지원하며 이 경우 MLflow Run은
+만들지 않습니다. 로컬 경로나 GCS 파일을 검증한 경우에만 Run을 기록합니다. 현재
+단계에서는 모델 파일이나 Model Registry 버전을 만들지 않으며, 다음 단계에서 검증된
+파일 경로를 기존 `training.train` 학습 흐름에 전달합니다.
 
 ### Training 이미지 Cloud Build
 
