@@ -725,37 +725,65 @@ docker compose -f compose.serving.yml up --build
 사용할 수 있도록 내부 포트는 `PORT=8080`으로 실행됩니다. 현재 Docker 실행 경로는
 MLflow와 연결하지 않으며 항상 `StubPredictor`를 사용합니다.
 
-## Cloud Run Training Job 스켈레톤
+## Cloud Run Training Job 데이터 입력 스켈레톤
 
-실제 데이터 다운로드와 모델 학습을 연결하기 전에는 Training Job 컨테이너의 실행,
-환경변수 전달, 로그 수집, 종료 코드만 확인하는 Stub을 사용합니다. 로컬 설정 파일은
-`.env.training.example`을 복사해 준비합니다.
+Training Job은 같은 환경변수로 로컬 파일과 GCS 객체를 선택합니다. 로컬에서는
+`data/open/train.csv`를 직접 읽고, Cloud Run에서는 GCS 객체를 컨테이너의 임시
+디렉터리로 내려받은 뒤 같은 CSV 검증 로직을 실행합니다. 아직 모델 학습과 MLflow
+기록은 실행하지 않고 데이터 입력 경로만 검증합니다.
+
+```text
+로컬 실행     TRAINING_DATA_URI=data/open/train.csv
+Cloud Run    TRAINING_DATA_URI=gs://fdshield-ml-data-801817539291/datasets/open/v1/train.csv
+```
+
+GCS 버킷은 공개하지 않습니다. Cloud Run Job의 서비스 계정이
+`roles/storage.objectViewer` 권한으로 객체를 읽으므로 브라우저에서 파일 링크가
+열리지 않아도 정상입니다.
+
+로컬 설정 파일은 `.env.training.example`을 복사해 준비합니다.
 
 ```console
 Copy-Item .env.training.example .env.training
 ```
 
-학습용 이미지를 빌드하고 실행합니다.
+Python으로 로컬 파일 검증만 실행할 수 있습니다.
 
 ```console
-docker build -f Dockerfile.training -t fdshield/ml-training:local .
-docker run --rm --env-file .env.training fdshield/ml-training:local
+uv run python -m fdshield_ml.training.job
 ```
 
-정상 실행되면 `training_job_started`, `training_job_completed` JSON 로그를 출력하고
-종료 코드 `0`을 반환합니다. 필수 설정이 없거나 지원하지 않는 값이면
-`training_job_configuration_error` 로그와 종료 코드 `2`를 반환합니다.
+학습용 이미지를 빌드하고 실행할 때는 Git에서 제외된 데이터 디렉터리를 읽기 전용으로
+마운트합니다. PowerShell 기준 명령은 다음과 같습니다.
+
+```powershell
+docker build -f Dockerfile.training -t fdshield/ml-training:local .
+docker run --rm `
+  --env-file .env.training `
+  -e TRAINING_DATA_URI=/data/train.csv `
+  --mount "type=bind,source=$($PWD.Path)\data\open,target=/data,readonly" `
+  fdshield/ml-training:local
+```
+
+정상 실행되면 `training_job_started`, `training_data_validated`,
+`training_job_completed` JSON 로그를 출력하고 종료 코드 `0`을 반환합니다. 로그에는
+행·컬럼 수, 정상·사기 라벨 수, 파일 크기만 남기고 거래 원문과 계좌번호는 남기지
+않습니다.
+
+- 필수 설정이 없거나 지원하지 않는 URI이면 `training_job_configuration_error`, 종료 코드 `2`
+- 파일 다운로드, CSV 형식, 필수 컬럼 또는 라벨에 문제가 있으면 `training_data_error`, 종료 코드 `3`
 
 현재 지원하는 설정은 다음과 같습니다.
 
-| 환경변수 | 현재 값 | 역할 |
-|---|---|---|
-| `TRAINING_JOB_TYPE` | `binary` | 실행할 학습 작업 종류 |
-| `TRAINING_DATA_URI` | `stub://local-data` | Stub 데이터 위치, 추후 `gs://` 사용 |
-| `MLFLOW_EXPERIMENT_NAME` | `fdshield-binary-training` | 추후 학습 결과를 기록할 MLflow Experiment |
+| 환경변수 | 로컬 값 | Cloud Run 값 | 역할 |
+|---|---|---|---|
+| `TRAINING_JOB_TYPE` | `binary` | `binary` | 실행할 학습 작업 종류 |
+| `TRAINING_DATA_URI` | `data/open/train.csv` | `gs://fdshield-ml-data-801817539291/datasets/open/v1/train.csv` | 학습 CSV 위치 |
+| `MLFLOW_EXPERIMENT_NAME` | `fdshield-binary-training` | `fdshield-binary-training` | 추후 학습 결과를 기록할 MLflow Experiment |
 
-현재 Stub은 MLflow에 접속하거나 실제 모델을 학습하지 않습니다. Cloud Run Job 실행
-구조를 검증한 뒤 GCS 데이터 다운로드와 기존 `training.train` 학습 흐름을 연결합니다.
+`stub://...` 값도 기존 인프라 실행 확인용으로 계속 지원합니다. 현재 단계는 MLflow에
+접속하거나 실제 모델을 학습하지 않습니다. 다음 단계에서 검증된 파일 경로를 기존
+`training.train` 학습 흐름에 전달합니다.
 
 ### Training 이미지 Cloud Build
 
