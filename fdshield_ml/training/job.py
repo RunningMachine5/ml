@@ -1,22 +1,31 @@
 """Cloud Run Job에서 실행할 학습 작업의 초기 진입점.
 
-현재는 인프라 연결을 검증하기 위한 Stub만 실행한다. 실제 학습을 연결할 때는
-검증된 설정을 기존 ``train_xgboost`` 학습 흐름에 전달하도록 교체한다.
+Stub URI는 인프라 실행만 확인하고, 로컬 경로와 GCS URI는 학습 CSV를 준비해
+필수 컬럼과 이진 라벨을 검증한다. 실제 학습 연결 전 데이터 입출력 경계를 먼저
+확인하기 위한 단계다.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
+from contextlib import AbstractContextManager
 from dataclasses import asdict, dataclass
 import json
 import os
+from pathlib import Path
 import sys
-from collections.abc import Mapping
 from typing import TextIO
-from urllib.parse import urlparse
+
+from fdshield_ml.training.data_loader import (
+    TrainingDataError,
+    data_source_type,
+    inspect_training_csv,
+    materialize_training_data,
+)
 
 
 SUPPORTED_JOB_TYPES = frozenset({"binary"})
-SUPPORTED_DATA_SCHEMES = frozenset({"gs", "stub"})
+TrainingDataMaterializer = Callable[[str], AbstractContextManager[Path]]
 
 
 @dataclass(frozen=True)
@@ -53,10 +62,7 @@ class TrainingJobConfig:
             supported = ", ".join(sorted(SUPPORTED_JOB_TYPES))
             raise ValueError(f"TRAINING_JOB_TYPE must be one of: {supported}")
 
-        data_scheme = urlparse(values["data_uri"]).scheme.lower()
-        if data_scheme not in SUPPORTED_DATA_SCHEMES:
-            supported = ", ".join(sorted(SUPPORTED_DATA_SCHEMES))
-            raise ValueError(f"TRAINING_DATA_URI scheme must be one of: {supported}")
+        data_source_type(values["data_uri"])
 
         return cls(**values)
 
@@ -84,16 +90,57 @@ def run_stub(config: TrainingJobConfig, stream: TextIO = sys.stdout) -> None:
     )
 
 
+def run_data_validation(
+    config: TrainingJobConfig,
+    stream: TextIO = sys.stdout,
+    materializer: TrainingDataMaterializer = materialize_training_data,
+) -> None:
+    """로컬 또는 GCS CSV를 준비하고 개인정보 없이 요약만 기록한다."""
+
+    source_type = data_source_type(config.data_uri)
+    _write_event(
+        stream,
+        "training_job_started",
+        **asdict(config),
+        source_type=source_type,
+    )
+
+    with materializer(config.data_uri) as data_path:
+        summary = inspect_training_csv(data_path)
+
+    _write_event(
+        stream,
+        "training_data_validated",
+        **asdict(summary),
+        data_uri=config.data_uri,
+        source_type=source_type,
+    )
+    _write_event(
+        stream,
+        "training_job_completed",
+        job_type=config.job_type,
+        mode="data-validation",
+        status="success",
+    )
+
+
 def main(
     environ: Mapping[str, str] | None = None,
     stdout: TextIO = sys.stdout,
     stderr: TextIO = sys.stderr,
+    materializer: TrainingDataMaterializer = materialize_training_data,
 ) -> int:
     """환경변수를 검증하고 성공 여부를 프로세스 종료 코드로 반환한다."""
 
     try:
         config = TrainingJobConfig.from_env(os.environ if environ is None else environ)
-        run_stub(config, stdout)
+        if data_source_type(config.data_uri) == "stub":
+            run_stub(config, stdout)
+        else:
+            run_data_validation(config, stdout, materializer)
+    except TrainingDataError as error:
+        _write_event(stderr, "training_data_error", message=str(error))
+        return 3
     except ValueError as error:
         _write_event(stderr, "training_job_configuration_error", message=str(error))
         return 2
