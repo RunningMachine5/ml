@@ -1,0 +1,157 @@
+name: ML Training Cloud Run Job CD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/deploy-training.yml"
+      - ".dockerignore"
+      - "Dockerfile.training"
+      - "cloudbuild.training.yaml"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "fdshield_ml/__init__.py"
+      - "fdshield_ml/features.py"
+      - "fdshield_ml/common/**"
+      - "fdshield_ml/training/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ml-training-cloud-run-job
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: project-4cc3406c-72d8-4907-a5d
+  GCP_REGION: asia-northeast3
+  CLOUD_RUN_JOB: fdshield-binary-training
+  IMAGE_NAME: asia-northeast3-docker.pkg.dev/project-4cc3406c-72d8-4907-a5d/fdshield/ml-training
+
+jobs:
+  test-build-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Run tests
+        run: uv run python -m pytest
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Install Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Build and push immutable image with Cloud Build
+        env:
+          DEPLOY_IMAGE: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+        run: |
+          build_id="$(
+            gcloud builds submit \
+              --project="$GCP_PROJECT_ID" \
+              --config="cloudbuild.training.yaml" \
+              --substitutions="_DEPLOY_IMAGE=$DEPLOY_IMAGE" \
+              --async \
+              --format="value(id)" \
+              --quiet \
+              .
+          )"
+
+          if [[ -z "$build_id" ]]; then
+            echo "Cloud Build did not return a build ID."
+            exit 1
+          fi
+
+          echo "Cloud Build submitted: $build_id"
+          build_status=""
+
+          for attempt in $(seq 1 120); do
+            build_status="$(
+              gcloud builds describe "$build_id" \
+                --project="$GCP_PROJECT_ID" \
+                --format="value(status)"
+            )"
+
+            echo "Cloud Build status ($attempt/120): $build_status"
+
+            case "$build_status" in
+              SUCCESS)
+                break
+                ;;
+              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
+                echo "Cloud Build failed: $build_status"
+                exit 1
+                ;;
+            esac
+
+            sleep 5
+          done
+
+          if [[ "$build_status" != "SUCCESS" ]]; then
+            echo "Cloud Build status check timed out."
+            exit 1
+          fi
+
+      - name: Resolve pushed image digest
+        env:
+          DEPLOY_IMAGE: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+        run: |
+          deploy_digest="$(
+            gcloud artifacts docker images describe "$DEPLOY_IMAGE" \
+              --project="$GCP_PROJECT_ID" \
+              --format="value(image_summary.fully_qualified_digest)"
+          )"
+
+          if [[ "$deploy_digest" != "$IMAGE_NAME"@sha256:* ]]; then
+            echo "Artifact Registry did not return the expected image digest."
+            echo "Resolved value: $deploy_digest"
+            exit 1
+          fi
+
+          echo "DEPLOY_DIGEST=$deploy_digest" >> "$GITHUB_ENV"
+          echo "Training image digest: $deploy_digest"
+
+      - name: Update Cloud Run Training Job image
+        run: |
+          gcloud run jobs update "$CLOUD_RUN_JOB" \
+            --project="$GCP_PROJECT_ID" \
+            --region="$GCP_REGION" \
+            --image="$DEPLOY_DIGEST" \
+            --quiet
+
+      - name: Verify configured Training Job image
+        run: |
+          configured_image="$(
+            gcloud run jobs describe "$CLOUD_RUN_JOB" \
+              --project="$GCP_PROJECT_ID" \
+              --region="$GCP_REGION" \
+              --format="value(spec.template.spec.template.spec.containers[0].image)"
+          )"
+
+          if [[ "$configured_image" != "$DEPLOY_DIGEST" ]]; then
+            echo "Cloud Run Job image verification failed."
+            echo "Expected: $DEPLOY_DIGEST"
+            echo "Configured: $configured_image"
+            exit 1
+          fi
+
+          echo "Cloud Run Training Job image updated: $configured_image"
+          echo "The Training Job was not executed by this deployment."

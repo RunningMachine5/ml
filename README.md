@@ -810,6 +810,28 @@ gcloud builds submit \
 이 설정은 이미지를 빌드하고 업로드하는 역할만 합니다. Cloud Run Job 생성과 학습
 실행은 별도 단계이며, 이미지 업로드만으로 학습이 자동 시작되지는 않습니다.
 
+### Training Cloud Run Job CD
+
+`.github/workflows/deploy-training.yml`은 Training 관련 코드가 `main`에 반영되면
+다음 배포 작업을 자동으로 수행합니다.
+
+```text
+전체 테스트
+→ Cloud Build로 Training 이미지 빌드
+→ Artifact Registry에 커밋 SHA 태그로 업로드
+→ 업로드된 이미지의 SHA256 Digest 확인
+→ fdshield-binary-training Job 이미지 업데이트
+→ Job에 설정된 이미지 Digest 검증
+```
+
+배포 Workflow는 기존 Job의 `TRAINING_DATA_URI`, MLflow Secret, 실행 서비스 계정,
+CPU·메모리·Timeout 설정을 변경하지 않습니다. 또한 코드가 병합될 때 실제 학습이
+자동으로 시작되지 않도록 `gcloud run jobs execute`를 호출하지 않습니다. 학습은
+별도의 명시적인 요청 Workflow 또는 관리자 API에서 실행합니다.
+
+필요한 경우 GitHub Actions 화면의 `workflow_dispatch`로 같은 배포만 수동 실행할 수
+있습니다. 이 경우에도 Job 이미지만 갱신하고 학습은 실행하지 않습니다.
+
 ### Serving·Training 이미지 변경 범위
 
 Python 테스트는 모든 Pull Request에서 실행합니다. Docker 이미지 빌드는 변경된
