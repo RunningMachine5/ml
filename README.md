@@ -644,8 +644,10 @@ uv run python -m fdshield_ml.training.train \
 | `fdshield_ml/common/features.py` | 라벨 변환, 식별자 제외, 시간 Feature 생성 |
 | `fdshield_ml/serving/main.py` | 로컬 Docker와 Cloud Run Service 실행 진입점 |
 | `fdshield_ml/serving/app.py` | Backend가 호출하는 FastAPI 추론 API |
-| `fdshield_ml/serving/predictor.py` | 실제 모델 교체 전 규칙 기반 Stub 예측기 |
+| `fdshield_ml/serving/predictor.py` | Stub/MLflow predictor 선택 |
+| `fdshield_ml/serving/mlflow_predictor.py` | Registry의 고정 버전 모델 로드와 실제 추론 |
 | `fdshield_ml/training/job.py` | Cloud Run Training Job 실행 진입점 |
+| `fdshield_ml/training/production.py` | 공통 전처리 기반 XGBoost 학습·Registry 등록·승격 |
 | `fdshield_ml/training/tracking.py` | MLflow 주소와 인증 설정 및 연결 확인 |
 | `fdshield_ml/training/pipeline.py` | 공통 데이터 분할, 전처리, 모델 생성 및 평가 |
 | `fdshield_ml/training/train.py` | CLI 입력, 로컬 학습, MLflow 기록 실행 |
@@ -670,14 +672,11 @@ Python을 생성하지 않습니다.
 공통 데이터 분할과 평가 방식을 임의로 변경하면 다른 팀원의 Run과 공정하게 비교할
 수 없으므로, 변경이 필요한 경우 팀에서 먼저 기준을 합의합니다.
 
-## ML 서빙 스켈레톤 실행
+## ML Serving 실행
 
-실제 모델 파일을 연결하기 전에는 현재 공개 데이터에서 모델이 사용하는 원본 55개
-컬럼을 받는 결정적 규칙 기반 Stub이 실행됩니다. 요청은 `transaction_id`와
-`features`로 구성하며, `features`의 이름과 값은 학습 Pipeline에 들어가는 원본 형태를
-유지합니다. 정답 라벨 `Fraud_Type`과 현재 모델에서 제외한 식별정보는 받지 않습니다.
-같은 요청은 항상 같은 결과를 반환하므로 Backend 연동과 시연 흐름을 먼저 검증할 수
-있습니다.
+Serving은 로컬 계약 확인용 `stub`과 MLflow Registry 모델을 사용하는 `mlflow` 모드를
+지원합니다. 두 모드 모두 Backend로부터 원본 Feature 54개를 받아 공통 전처리로 고정된
+91개 수치 Feature를 만듭니다. 정답 라벨과 식별정보는 받지 않습니다.
 
 ```json
 {
@@ -693,9 +692,7 @@ Python을 생성하지 않습니다.
 ```
 
 위 예시는 구조를 줄여 쓴 것이며 실제 요청의 `features`에는
-`fdshield_ml/common/feature_contract.py`에 정의한 55개 컬럼이 모두 필요합니다.
-현재 Stub 응답의 `shap`은 실제 SHAP가 아니라 원본 컬럼 이름을 사용한 임시
-기여도입니다.
+`fdshield_ml/common/feature_contract.py`에 정의한 54개 컬럼이 모두 필요합니다.
 
 ```console
 uv run uvicorn fdshield_ml.serving.app:app --host 0.0.0.0 --port 8001
@@ -708,12 +705,18 @@ uv run uvicorn fdshield_ml.serving.app:app --host 0.0.0.0 --port 8001
 
 | 환경변수 | 기본값 | 역할 |
 |---|---|---|
+| `ML_PREDICTOR_MODE` | `stub` | `stub` 또는 `mlflow` 선택 |
 | `ML_FRAUD_THRESHOLD` | `0.55` | 사기로 판정할 확률 임계값 |
-| `ML_MODEL_NAME` | `fdshield-rule-based-stub` | 응답에 표시할 모델 이름 |
-| `ML_MODEL_VERSION` | `0` | 응답에 표시할 Stub 버전 |
+| `ML_MODEL_NAME` | `fdshield-rule-based-stub` | Registry 모델 이름 및 응답 모델명 |
+| `ML_MODEL_VERSION` | `0` | 배포할 정확한 숫자 Registry 버전 |
+| `MLFLOW_TRACKING_URI` | 없음 | MLflow HTTPS 주소 (`mlflow` 모드 필수) |
+| `MLFLOW_TRACKING_USERNAME` | 없음 | MLflow Basic Auth 사용자 (`mlflow` 모드 필수) |
+| `MLFLOW_TRACKING_PASSWORD` | 없음 | MLflow Basic Auth 비밀번호 (`mlflow` 모드 필수) |
 
-실제 모델을 연결할 때는 MLflow에 저장된 전처리 포함 Pipeline을 로드하고,
-`StubPredictor`만 실제 예측기 구현으로 교체합니다.
+`mlflow` 모드는 프로세스 시작 중 `models:/<name>/<version>`을 한 번 로드합니다. 모델
+로드에 실패하면 포트를 열지 않으므로 새 Cloud Run 리비전은 Ready가 되지 않고 기존
+리비전 트래픽은 그대로 유지됩니다. XGBoost 모델은 내장 contribution으로 설명값을
+반환하며 다른 `predict_proba` 모델은 빈 `shap`을 반환합니다.
 
 Docker로 Stub 서버를 실행할 때는 다음 명령을 사용합니다.
 
@@ -722,16 +725,21 @@ docker compose -f compose.serving.yml up --build
 ```
 
 컨테이너는 `http://localhost:8001`에서 요청을 받고, Cloud Run에서도 같은 이미지를
-사용할 수 있도록 내부 포트는 `PORT=8080`으로 실행됩니다. 현재 Docker 실행 경로는
-MLflow와 연결하지 않으며 항상 `StubPredictor`를 사용합니다.
+사용할 수 있도록 내부 포트는 `PORT=8080`으로 실행됩니다. 실제 모델은
+`.env.serving.example`을 `.env.serving`으로 복사한 뒤 다음처럼 실행합니다.
 
-## Cloud Run Training Job 데이터 입력 스켈레톤
+```console
+docker compose --env-file .env.serving -f compose.serving.yml up --build
+```
+
+## Cloud Run Training Job
 
 Training Job은 같은 환경변수로 로컬 파일과 GCS 객체를 선택합니다. 로컬에서는
 `data/open/train.csv`를 직접 읽고, Cloud Run에서는 GCS 객체를 컨테이너의 임시
-디렉터리로 내려받은 뒤 같은 CSV 검증 로직을 실행합니다. 실제 모델은 학습하지
-않지만, 검증 결과를 MLflow Run으로 기록해 GCS부터 Tracking Server까지의 연결을
-확인합니다.
+디렉터리로 내려받습니다. `TRAINING_MODE=train`이면 공통 전처리로 XGBoost를 학습하고
+지표를 기록한 뒤 MLflow Model Registry에 새 버전을 등록합니다. PR-AUC와 Recall
+기준을 모두 통과하고 `MLFLOW_AUTO_PROMOTE=true`인 경우에만 지정한 alias를 새
+버전으로 이동합니다. `TRAINING_MODE=validate`는 데이터 검증 Run만 남깁니다.
 
 ```text
 로컬 실행     TRAINING_DATA_URI=data/open/train.csv
@@ -785,11 +793,16 @@ docker run --rm `
 | `MLFLOW_TRACKING_USERNAME` | 로컬 전용 계정 | Secret Manager 주입 | MLflow Basic Auth 사용자 |
 | `MLFLOW_TRACKING_PASSWORD` | 로컬 비밀번호 | Secret Manager 주입 | MLflow Basic Auth 비밀번호 |
 | `MLFLOW_EXPERIMENT_NAME` | `fdshield-binary-training` | `fdshield-binary-training` | 검증 Run을 기록할 MLflow Experiment |
+| `TRAINING_MODE` | `train` | API override | `validate` 또는 실제 `train` |
+| `MLFLOW_REGISTERED_MODEL_NAME` | `fdshield-fraud-detector` | API override | Registry 모델 이름 |
+| `MLFLOW_MODEL_ALIAS` | `champion` | API override | 기준 통과 시 이동할 alias |
+| `MLFLOW_AUTO_PROMOTE` | `true` | API override | 지표 기준 통과 버전의 alias 자동 승격 |
+| `MODEL_MIN_PR_AUC` | `0.0` | API override | 승격 최소 PR-AUC |
+| `MODEL_MIN_RECALL` | `0.0` | API override | 승격 최소 Recall |
 
 `stub://...` 값도 기존 인프라 실행 확인용으로 계속 지원하며 이 경우 MLflow Run은
-만들지 않습니다. 로컬 경로나 GCS 파일을 검증한 경우에만 Run을 기록합니다. 현재
-단계에서는 모델 파일이나 Model Registry 버전을 만들지 않으며, 다음 단계에서 검증된
-파일 경로를 기존 `training.train` 학습 흐름에 전달합니다.
+만들지 않습니다. `train` 모드는 Registry 버전과 검증 태그를 만들며 실행 로그의
+`training_model_registered` 이벤트에서 정확한 숫자 버전을 확인할 수 있습니다.
 
 ### Training 이미지 Cloud Build
 
@@ -831,6 +844,25 @@ CPU·메모리·Timeout 설정을 변경하지 않습니다. 또한 코드가 �
 
 필요한 경우 GitHub Actions 화면의 `workflow_dispatch`로 같은 배포만 수동 실행할 수
 있습니다. 이 경우에도 Job 이미지만 갱신하고 학습은 실행하지 않습니다.
+
+### Serving 모델 무중단 배포
+
+`.github/workflows/deploy-serving.yml`의 수동 실행에서 Registry의 정확한 숫자
+`model_version`을 지정합니다. Workflow는 새 이미지를 Digest로 고정하고 다음 순서로
+배포합니다.
+
+```text
+새 리비전 생성(트래픽 0%, 태그 URL)
+→ /ready 및 54필드 /predict 스모크 테스트
+→ 응답 model_name/model_version 검증
+→ 검증된 리비전에 트래픽 100% 이동
+```
+
+새 모델 로드나 스모크 테스트가 실패하면 트래픽 이동 단계가 실행되지 않아 기존
+리비전이 계속 요청을 처리합니다. 승격 시점의 기존 진행 중 요청도 Cloud Run에서
+완료되며, 새 요청부터 새 리비전으로 전달됩니다. 운영에서는
+`MLFLOW_TRACKING_USERNAME`, `MLFLOW_TRACKING_PASSWORD`를 Cloud Run Secret Manager
+환경변수로 미리 연결해야 합니다.
 
 ### Serving·Training 이미지 변경 범위
 

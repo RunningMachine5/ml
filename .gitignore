@@ -3,6 +3,7 @@
 !.env.example
 !.env.tracking.example
 !.env.training.example
+!.env.serving.example
 __pycache__/
 *.py[cod]
 .pytest_cache/

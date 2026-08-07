@@ -14,6 +14,20 @@ on:
       - "fdshield_ml/common/**"
       - "fdshield_ml/serving/**"
   workflow_dispatch:
+    inputs:
+      predictor_mode:
+        description: Serving predictor mode
+        required: true
+        type: choice
+        options: [mlflow, stub]
+        default: mlflow
+      model_name:
+        description: MLflow registered model name
+        required: false
+        default: fdshield-fraud-detector
+      model_version:
+        description: Exact numeric MLflow Registry version
+        required: false
 
 permissions:
   contents: read
@@ -28,6 +42,9 @@ env:
   GCP_REGION: asia-northeast3
   CLOUD_RUN_SERVICE: fdshield-ml-serving
   IMAGE_NAME: asia-northeast3-docker.pkg.dev/project-4cc3406c-72d8-4907-a5d/fdshield/ml-serving
+  PREDICTOR_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.predictor_mode || vars.ML_PREDICTOR_MODE || 'stub' }}
+  MODEL_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.model_name || vars.ML_MODEL_NAME || 'fdshield-fraud-detector' }}
+  MODEL_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.model_version || vars.ML_MODEL_VERSION || '0' }}
 
 jobs:
   test-build-deploy:
@@ -109,56 +126,115 @@ jobs:
             exit 1
           fi
 
-      - name: Deploy image to Cloud Run
+      - name: Resolve pushed image digest
         env:
           DEPLOY_IMAGE: ${{ env.IMAGE_NAME }}:${{ github.sha }}
         run: |
-          gcloud run services update "$CLOUD_RUN_SERVICE" \
+          deploy_digest="$(
+            gcloud artifacts docker images describe "$DEPLOY_IMAGE" \
+              --project="$GCP_PROJECT_ID" \
+              --format="value(image_summary.fully_qualified_digest)"
+          )"
+          if [[ "$deploy_digest" != "$IMAGE_NAME"@sha256:* ]]; then
+            echo "Artifact Registry did not return the expected image digest."
+            exit 1
+          fi
+          echo "DEPLOY_DIGEST=$deploy_digest" >> "$GITHUB_ENV"
+
+      - name: Validate model deployment input
+        run: |
+          if [[ "$PREDICTOR_MODE" == "mlflow" && ! "$MODEL_VERSION" =~ ^[0-9]+$ ]]; then
+            echo "MLflow deployment requires an exact numeric MODEL_VERSION."
+            exit 1
+          fi
+          if [[ "$PREDICTOR_MODE" != "mlflow" && "$PREDICTOR_MODE" != "stub" ]]; then
+            echo "PREDICTOR_MODE must be mlflow or stub."
+            exit 1
+          fi
+
+      - name: Deploy tagged revision without production traffic
+        run: |
+          revision_tag="model-${GITHUB_SHA::12}"
+          gcloud run deploy "$CLOUD_RUN_SERVICE" \
             --project="$GCP_PROJECT_ID" \
             --region="$GCP_REGION" \
-            --image="$DEPLOY_IMAGE" \
+            --image="$DEPLOY_DIGEST" \
+            --update-env-vars="ML_PREDICTOR_MODE=$PREDICTOR_MODE,ML_MODEL_NAME=$MODEL_NAME,ML_MODEL_VERSION=$MODEL_VERSION" \
+            --no-traffic \
+            --tag="$revision_tag" \
             --quiet
+          echo "REVISION_TAG=$revision_tag" >> "$GITHUB_ENV"
 
-      - name: Verify deployed revision readiness
+      - name: Resolve tagged revision URL
         run: |
-          for attempt in $(seq 1 12); do
-            read -r ready_status latest_created_revision latest_ready_revision < <(
-              gcloud run services describe "$CLOUD_RUN_SERVICE" \
-                --project="$GCP_PROJECT_ID" \
-                --region="$GCP_REGION" \
-                --format=json \
-                | python3 -c '
+          gcloud run services describe "$CLOUD_RUN_SERVICE" \
+            --project="$GCP_PROJECT_ID" \
+            --region="$GCP_REGION" \
+            --format=json > "$RUNNER_TEMP/service.json"
+          read -r service_url tagged_url latest_created_revision < <(
+            python3 - "$REVISION_TAG" "$RUNNER_TEMP/service.json" <<'PY'
           import json
           import sys
 
-          status = json.load(sys.stdin).get("status", {})
-          ready_status = next(
-              (
-                  condition.get("status", "")
-                  for condition in status.get("conditions", [])
-                  if condition.get("type") == "Ready"
-              ),
+          tag, path = sys.argv[1:]
+          status = json.load(open(path, encoding="utf-8")).get("status", {})
+          tagged_url = next(
+              (target.get("url", "") for target in status.get("traffic", []) if target.get("tag") == tag),
               "",
           )
-          print(
-              ready_status,
-              status.get("latestCreatedRevisionName", ""),
-              status.get("latestReadyRevisionName", ""),
+          print(status.get("url", ""), tagged_url, status.get("latestCreatedRevisionName", ""))
+          PY
           )
-          '
-            )
+          test -n "$service_url"
+          test -n "$tagged_url"
+          test -n "$latest_created_revision"
+          echo "SERVICE_URL=$service_url" >> "$GITHUB_ENV"
+          echo "TAGGED_URL=$tagged_url" >> "$GITHUB_ENV"
+          echo "NEW_REVISION=$latest_created_revision" >> "$GITHUB_ENV"
 
-            if [[ "$ready_status" == "True" \
-              && -n "$latest_created_revision" \
-              && "$latest_created_revision" == "$latest_ready_revision" ]]; then
-              echo "Cloud Run revision is ready: $latest_ready_revision"
-              exit 0
-            fi
+      - name: Smoke test tagged revision
+        run: |
+          identity_token="$(gcloud auth print-identity-token --audiences="$SERVICE_URL")"
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer $identity_token" \
+            "$TAGGED_URL/ready"
+          prediction="$(
+            curl --fail --silent --show-error \
+              --header "Authorization: Bearer $identity_token" \
+              --header "Content-Type: application/json" \
+              --data @deploy/smoke-request.json \
+              "$TAGGED_URL/predict"
+          )"
+          python3 - "$MODEL_NAME" "$MODEL_VERSION" "$prediction" <<'PY'
+          import json
+          import sys
 
-            echo "Cloud Run revision is not ready yet ($attempt/12)."
-            echo "Ready=$ready_status, created=$latest_created_revision, ready_revision=$latest_ready_revision"
-            sleep 5
-          done
+          expected_name, expected_version, payload = sys.argv[1:]
+          response = json.loads(payload)
+          if response.get("model_name") != expected_name:
+              raise SystemExit("Smoke prediction returned a different model name")
+          if response.get("model_version") != expected_version:
+              raise SystemExit("Smoke prediction returned a different model version")
+          PY
 
-          echo "Cloud Run revision readiness check failed."
-          exit 1
+      - name: Migrate all production traffic to verified revision
+        run: |
+          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" \
+            --project="$GCP_PROJECT_ID" \
+            --region="$GCP_REGION" \
+            --to-tags="$REVISION_TAG=100" \
+            --quiet
+
+      - name: Verify production traffic target
+        run: |
+          active_revision="$(
+            gcloud run services describe "$CLOUD_RUN_SERVICE" \
+              --project="$GCP_PROJECT_ID" \
+              --region="$GCP_REGION" \
+              --format="value(status.traffic[0].revisionName)"
+          )"
+          if [[ "$active_revision" != "$NEW_REVISION" ]]; then
+            echo "Production traffic did not move to $NEW_REVISION."
+            exit 1
+          fi
+          echo "Production traffic migrated to $NEW_REVISION."

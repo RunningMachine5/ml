@@ -10,6 +10,10 @@ from fdshield_ml.serving.schemas import PredictionRequest, PredictionResponse
 class Predictor(Protocol):
     """서빙 API가 의존하는 최소 예측 인터페이스."""
 
+    model_name: str
+    model_version: str
+    ready: bool
+
     def predict(self, request: PredictionRequest) -> PredictionResponse:
         """거래 한 건의 사기 여부와 설명값을 반환한다."""
 
@@ -30,6 +34,7 @@ class StubPredictor:
         self.threshold = threshold
         self.model_name = model_name
         self.model_version = model_version
+        self.ready = True
 
     @classmethod
     def from_environment(cls) -> "StubPredictor":
@@ -103,3 +108,16 @@ def _is_enabled(value: object) -> bool:
     """공개 데이터의 0/1 상태값을 안전하게 판별한다."""
 
     return _as_float(value) == 1.0
+
+
+def predictor_from_environment() -> Predictor:
+    """환경별로 Stub 또는 MLflow 실제 모델을 선택한다."""
+
+    mode = os.getenv("ML_PREDICTOR_MODE", "stub").strip().lower()
+    if mode == "stub":
+        return StubPredictor.from_environment()
+    if mode == "mlflow":
+        from fdshield_ml.serving.mlflow_predictor import MLflowPredictor
+
+        return MLflowPredictor.from_environment()
+    raise ValueError("ML_PREDICTOR_MODE must be 'stub' or 'mlflow'")
