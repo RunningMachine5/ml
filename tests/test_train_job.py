@@ -12,6 +12,10 @@ import pytest
 from fdshield_ml.training.data_loader import TrainingDataSummary
 from fdshield_ml.training.job import TrainingJobConfig, main
 from fdshield_ml.training.job_tracking import TrainingTrackingError
+from fdshield_ml.training.production import (
+    ProductionTrainingConfig,
+    ProductionTrainingResult,
+)
 
 
 VALID_ENV = {
@@ -70,6 +74,40 @@ def test_training_job_config_accepts_local_data_path() -> None:
     environ = {**VALID_ENV, "TRAINING_DATA_URI": "data/open/train.csv"}
 
     assert TrainingJobConfig.from_env(environ).data_uri == "data/open/train.csv"
+
+
+def test_training_job_config_requires_registered_model_in_train_mode() -> None:
+    environ = {
+        **VALID_ENV,
+        "TRAINING_MODE": "train",
+        "TRAINING_DATA_URI": "data/train.csv",
+    }
+
+    with pytest.raises(ValueError, match="MLFLOW_REGISTERED_MODEL_NAME"):
+        TrainingJobConfig.from_env(environ)
+
+
+def test_training_job_config_builds_production_gate() -> None:
+    environ = {
+        **VALID_ENV,
+        "TRAINING_MODE": "train",
+        "TRAINING_DATA_URI": "data/train.csv",
+        "MLFLOW_REGISTERED_MODEL_NAME": "fdshield-fraud-detector",
+        "MLFLOW_MODEL_ALIAS": "champion",
+        "MLFLOW_AUTO_PROMOTE": "true",
+        "MODEL_MIN_PR_AUC": "0.75",
+        "MODEL_MIN_RECALL": "0.8",
+    }
+
+    config = TrainingJobConfig.from_env(environ)
+
+    assert config.production_config() == ProductionTrainingConfig(
+        registered_model_name="fdshield-fraud-detector",
+        model_alias="champion",
+        auto_promote=True,
+        minimum_pr_auc=0.75,
+        minimum_recall=0.8,
+    )
 
 
 def test_training_job_main_emits_structured_events_and_succeeds() -> None:
@@ -186,3 +224,52 @@ def test_training_job_main_reports_tracking_error(tmp_path: Path) -> None:
     assert exit_code == 4
     assert error["event"] == "training_tracking_error"
     assert "MLflow is unavailable" in error["message"]
+
+
+def test_training_job_main_trains_registers_and_promotes_model(tmp_path: Path) -> None:
+    source = tmp_path / "transactions.csv"
+    source.write_text("placeholder", encoding="utf-8")
+    environ = {
+        **VALID_ENV,
+        "TRAINING_MODE": "train",
+        "TRAINING_DATA_URI": str(source),
+        "MLFLOW_REGISTERED_MODEL_NAME": "fdshield-fraud-detector",
+        "MLFLOW_AUTO_PROMOTE": "true",
+    }
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    def successful_training_runner(
+        data_path: str | Path,
+        experiment_name: str,
+        config: ProductionTrainingConfig,
+    ) -> ProductionTrainingResult:
+        assert Path(data_path) == source
+        assert experiment_name == "fdshield-binary-training"
+        assert config.registered_model_name == "fdshield-fraud-detector"
+        assert config.auto_promote is True
+        return ProductionTrainingResult(
+            run_id="run-123",
+            model_version=17,
+            metrics={"validation_pr_auc": 0.9, "validation_recall": 0.85},
+            validation_passed=True,
+            promoted=True,
+        )
+
+    exit_code = main(
+        environ,
+        stdout=stdout,
+        stderr=stderr,
+        training_runner=successful_training_runner,
+    )
+    events = [json.loads(line) for line in stdout.getvalue().splitlines()]
+
+    assert exit_code == 0
+    assert stderr.getvalue() == ""
+    assert [event["event"] for event in events] == [
+        "training_job_started",
+        "model_registered",
+        "training_job_completed",
+    ]
+    assert events[1]["model_version"] == 17
+    assert events[1]["promoted"] is True
