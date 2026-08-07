@@ -1,0 +1,72 @@
+"""ML Serving 테스트에서 공유하는 확정 원본 거래 Fixture."""
+
+from collections.abc import Callable
+
+import pytest
+
+
+@pytest.fixture
+def raw_features_factory() -> Callable[..., dict[str, object]]:
+    """Backend DTO와 동일한 54개 원본 Feature를 만드는 Factory."""
+
+    def factory(**overrides: object) -> dict[str, object]:
+        features: dict[str, object] = {
+            "Customer_Birthyear": 1981,
+            "Customer_Gender": "male",
+            "Customer_registration_datetime": "2023-01-20 09:41:55",
+            "Customer_credit_rating": 6,
+            "Customer_flag_change_of_authentication_1": 0,
+            "Customer_flag_change_of_authentication_2": 0,
+            "Customer_flag_change_of_authentication_3": 0,
+            "Customer_flag_change_of_authentication_4": 0,
+            "Customer_rooting_jailbreak_indicator": 1,
+            "Customer_mobile_roaming_indicator": 0,
+            "Customer_VPN_Indicator": 0,
+            "Customer_loan_type": "c",
+            "Customer_flag_terminal_malicious_behavior_1": 0,
+            "Customer_flag_terminal_malicious_behavior_2": 0,
+            "Customer_flag_terminal_malicious_behavior_3": 0,
+            "Customer_flag_terminal_malicious_behavior_5": 0,
+            "Customer_flag_terminal_malicious_behavior_6": 0,
+            "Customer_inquery_atm_limit": 0,
+            "Customer_increase_atm_limit": 1,
+            "Account_account_type": "a",
+            "Account_creation_datetime": "2024-12-02 22:14:22",
+            "Account_initial_balance": 8_812_467,
+            "Account_balance": 4_817_417,
+            "Account_indicator_release_limit_excess": 1,
+            "Account_amount_daily_limit": 10_000_000,
+            "Account_indicator_Openbanking": 0,
+            "Account_remaining_amount_daily_limit_exceeded": 6_004_950,
+            "Account_release_suspention": 0,
+            "Account_one_month_max_amount": 0,
+            "Account_one_month_std_dev": 100_000.0,
+            "Account_dawn_one_month_max_amount": 0,
+            "Account_dawn_one_month_std_dev": 0.0,
+            "Transaction_Datetime": "2025-01-12 03:04:05",
+            "Transaction_Amount": 100_000,
+            "Channel": "mobile",
+            "Operating_System": "Android",
+            "Error_Code": "a",
+            "Type_General_Automatic": "general",
+            "Access_Medium": "e",
+            "Location": "전북특별자치도 남원시 도통동 35.416400 127.390400",
+            "Transaction_num_connection_failure": 0,
+            "Another_Person_Account": 1,
+            "Distance": 0.0,
+            "Time Difference": "1 days 02:03:04",
+            "Unused_terminal_status": 0,
+            "Last_atm_transaction_datetime": "2025-01-10 03:04:05",
+            "Last_bank_branch_transaction_datetime": None,
+            "Flag_deposit_more_than_tenMillion": 0,
+            "Unused_account_status": 1,
+            "Recipient_account_suspend_status": 0,
+            "Number_of_transaction_with_the_account": 0,
+            "Transaction_history_with_the_account": 0,
+            "First_time_iOS_by_vulnerable_user": 0,
+            "Transaction_resumed_date": "2025-01-01 03:04:05",
+        }
+        features.update(overrides)
+        return features
+
+    return factory

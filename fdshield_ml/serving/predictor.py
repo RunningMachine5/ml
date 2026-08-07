@@ -3,6 +3,7 @@
 import os
 from typing import Protocol
 
+from fdshield_ml.common.preprocessing import preprocess_transaction_features
 from fdshield_ml.serving.schemas import PredictionRequest, PredictionResponse
 
 
@@ -14,7 +15,7 @@ class Predictor(Protocol):
 
 
 class StubPredictor:
-    """입력 계약 확정 전 일부 위험 신호만 사용하는 결정적 Stub."""
+    """실제 모델 연결 전 전처리 결과의 일부 위험 신호만 사용하는 결정적 Stub."""
 
     def __init__(
         self,
@@ -44,38 +45,36 @@ class StubPredictor:
         )
 
     def predict(self, request: PredictionRequest) -> PredictionResponse:
-        """전달된 위험 신호만 사용하고 모르는 컬럼은 안전하게 무시한다."""
+        """54개 원본 값을 91개로 전처리한 뒤 임시 규칙 점수를 계산한다."""
 
-        features = request.features
-        amount = abs(_as_float(features.get("Transaction_Amount")))
+        # 실제 모델이 연결되면 이 DataFrame을 그대로 predict_proba에 전달한다.
+        model_features = preprocess_transaction_features(request.features)
+        features = model_features.iloc[0]
+        amount = abs(_as_float(features["Transaction_Amount"]))
         standard_deviation = max(
-            abs(_as_float(features.get("Account_one_month_std_dev"))),
+            abs(_as_float(features["Account_one_month_std_dev"])),
             1.0,
         )
         deviation_ratio = amount / standard_deviation
 
         # 아래 값은 실제 SHAP가 아니라 API 연결을 확인하기 위한 임시 기여도다.
         contributions: dict[str, float] = {}
-        if "Transaction_Amount" in features:
-            contributions["Transaction_Amount"] = (
-                0.35 if amount >= 10_000_000 else 0.20 if amount >= 1_000_000 else 0.05
-            )
-        if "Account_one_month_std_dev" in features:
-            contributions["Account_one_month_std_dev"] = (
-                0.25 if deviation_ratio >= 100 else 0.10 if deviation_ratio >= 10 else 0.0
-            )
+        contributions["Transaction_Amount"] = (
+            0.35 if amount >= 10_000_000 else 0.20 if amount >= 1_000_000 else 0.05
+        )
+        contributions["Account_one_month_std_dev"] = (
+            0.25 if deviation_ratio >= 100 else 0.10 if deviation_ratio >= 10 else 0.0
+        )
 
         indicator_weights = {
             "Customer_VPN_Indicator": 0.15,
             "Unused_terminal_status": 0.15,
             "Recipient_account_suspend_status": 0.10,
-            "Transaction_Failure_Status": 0.05,
         }
         for feature_name, weight in indicator_weights.items():
-            if feature_name in features:
-                contributions[feature_name] = (
-                    weight if _is_enabled(features[feature_name]) else 0.0
-                )
+            contributions[feature_name] = (
+                weight if _is_enabled(features[feature_name]) else 0.0
+            )
 
         probability = round(min(0.05 + sum(contributions.values()), 0.99), 2)
 
