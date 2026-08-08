@@ -11,7 +11,7 @@ WORKDIR /app
 COPY --from=uv /uv /uvx /bin/
 COPY deploy/serving-requirements.txt ./deploy/serving-requirements.txt
 
-# Serving 이미지에는 학습·MLflow 패키지를 넣지 않고 API 실행 의존성만 설치한다.
+# Serving 이미지에는 학습 도구를 제외하고 MLflow 모델 로딩·추론 의존성만 설치한다.
 RUN uv pip install --system --no-cache \
     --requirement deploy/serving-requirements.txt
 

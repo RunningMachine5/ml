@@ -45,7 +45,7 @@ def log_data_validation_run(
                     "mode": "data-validation",
                     "data_source": source_type,
                     "data_uri": data_uri,
-                    "target_mapping": "m=0,a-l=1",
+                    "target_mapping": "Fraud_Type:m=0,a-l=1 or Is_Fraud:0/1",
                 }
             )
             mlflow.log_metrics(asdict(summary))
