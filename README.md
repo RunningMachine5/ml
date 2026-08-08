@@ -734,21 +734,20 @@ docker compose --env-file .env.serving -f compose.serving.yml up --build
 
 ## Cloud Run Training Job
 
-Training Job은 같은 환경변수로 로컬 파일과 GCS 객체를 선택합니다. 운영 학습은
-생성형 데이터의 전처리본 `train.csv`와 행 순서가 같은 원본 `transactions.csv`를
-함께 사용합니다. 전처리본의 91개 모델 피처와 라벨을 검증하고, 원본의
-`Transaction_Datetime`을 기준으로 2026-04-01 이전은 학습, 이후는 검증 데이터로
-분리합니다. Cloud Run에서는 두 GCS 객체를 컨테이너의 임시 디렉터리로 내려받습니다.
-`TRAINING_MODE=train`이면 XGBoost를 학습하고
+Training Job은 같은 환경변수로 로컬 파일과 GCS 객체를 선택합니다. 기본 운영 학습은
+ML팀 생성형 원본 `transactions.csv` 하나를 사용합니다. 알려진 식별·추적 컬럼은
+학습에서 제외하고 공통 54→91 전처리를 적용한 뒤, `Transaction_Datetime` 기준으로
+2026-04-01 이전은 학습, 이후는 검증 데이터로 분리합니다. 전처리된 `train.csv`를
+직접 재현 검증할 때만 행 순서가 같은 원본 `transactions.csv`를
+`TRAINING_TRANSACTIONS_URI`로 함께 지정합니다. Cloud Run에서는 GCS 객체를 컨테이너의
+임시 디렉터리로 내려받습니다. `TRAINING_MODE=train`이면 XGBoost를 학습하고
 지표를 기록한 뒤 MLflow Model Registry에 새 버전을 등록합니다. PR-AUC와 Recall
 기준을 모두 통과하고 `MLFLOW_AUTO_PROMOTE=true`인 경우에만 지정한 alias를 새
 버전으로 이동합니다. `TRAINING_MODE=validate`는 데이터 검증 Run만 남깁니다.
 
 ```text
-로컬 실행     TRAINING_DATA_URI=data/open/generated/train.csv
-              TRAINING_TRANSACTIONS_URI=data/open/generated/transactions.csv
-Cloud Run    TRAINING_DATA_URI=gs://fdshield-ml-data-801817539291/datasets/synthetic/v1/train.csv
-              TRAINING_TRANSACTIONS_URI=gs://fdshield-ml-data-801817539291/datasets/synthetic/v1/transactions.csv
+로컬 실행     TRAINING_DATA_URI=data/open/generated/transactions.csv
+Cloud Run    TRAINING_DATA_URI=gs://fdshield-ml-data-801817539291/datasets/generated/v1/transactions.csv
 ```
 
 GCS 버킷은 공개하지 않습니다. Cloud Run Job의 서비스 계정이
@@ -774,8 +773,7 @@ uv run --env-file .env.training python -m fdshield_ml.training.job
 docker build -f Dockerfile.training -t fdshield/ml-training:local .
 docker run --rm `
   --env-file .env.training `
-  -e TRAINING_DATA_URI=/data/train.csv `
-  -e TRAINING_TRANSACTIONS_URI=/data/transactions.csv `
+  -e TRAINING_DATA_URI=/data/transactions.csv `
   --mount "type=bind,source=$($PWD.Path)\data\open\generated,target=/data,readonly" `
   fdshield/ml-training:local
 ```
@@ -794,8 +792,8 @@ docker run --rm `
 | 환경변수 | 로컬 값 | Cloud Run 값 | 역할 |
 |---|---|---|---|
 | `TRAINING_JOB_TYPE` | `binary` | `binary` | 실행할 학습 작업 종류 |
-| `TRAINING_DATA_URI` | `data/open/generated/train.csv` | `gs://fdshield-ml-data-801817539291/datasets/synthetic/v1/train.csv` | 전처리된 91개 피처와 `Is_Fraud`가 있는 학습 CSV |
-| `TRAINING_TRANSACTIONS_URI` | `data/open/generated/transactions.csv` | `gs://fdshield-ml-data-801817539291/datasets/synthetic/v1/transactions.csv` | 행 순서가 같은 원본 거래 CSV(시간 분할 검증용) |
+| `TRAINING_DATA_URI` | `data/open/generated/transactions.csv` | `gs://fdshield-ml-data-801817539291/datasets/generated/v1/transactions.csv` | 기본값은 생성형 원본 거래 CSV. 전처리본 91개 피처 CSV도 지원 |
+| `TRAINING_TRANSACTIONS_URI` | 미지정 | 미지정 | `TRAINING_DATA_URI`가 전처리본일 때만 지정하는, 행 순서가 같은 원본 거래 CSV |
 | `TRAINING_SPLIT_DATETIME` | `2026-04-01 00:00:00` | `2026-04-01 00:00:00` | 학습/검증 시간 경계 |
 | `MLFLOW_TRACKING_URI` | `https://mlflow.fdshield.cloud` | `https://mlflow.fdshield.cloud` | MLflow Tracking Server 주소 |
 | `MLFLOW_TRACKING_USERNAME` | 로컬 전용 계정 | Secret Manager 주입 | MLflow Basic Auth 사용자 |
