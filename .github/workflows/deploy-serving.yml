@@ -387,17 +387,31 @@ jobs:
       - name: Verify production traffic target
         if: env.PREDICTOR_MODE == 'mlflow'
         run: |
-          active_revision="$(
-            gcloud run services describe "$CLOUD_RUN_SERVICE" \
-              --project="$GCP_PROJECT_ID" \
-              --region="$GCP_REGION" \
-              --format="value(status.traffic[0].revisionName)"
-          )"
-          if [[ "$active_revision" != "$NEW_REVISION" ]]; then
-            echo "Production traffic did not move to $NEW_REVISION."
-            exit 1
-          fi
-          echo "Production traffic migrated to $NEW_REVISION."
+          traffic_config="$RUNNER_TEMP/production-traffic.json"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" \
+            --project="$GCP_PROJECT_ID" \
+            --region="$GCP_REGION" \
+            --format=json > "$traffic_config"
+          python3 - "$NEW_REVISION" "$traffic_config" <<'PY'
+          import json
+          import sys
+
+          expected_revision, traffic_path = sys.argv[1:]
+          status = json.load(open(traffic_path, encoding="utf-8")).get("status", {})
+          revision_percent = {}
+          for target in status.get("traffic", []):
+              revision = target.get("revisionName", "")
+              percent = int(target.get("percent", 0) or 0)
+              if revision and percent:
+                  revision_percent[revision] = revision_percent.get(revision, 0) + percent
+
+          if revision_percent != {expected_revision: 100}:
+              raise SystemExit(
+                  "::error::Production traffic target mismatch: "
+                  f"expected {{{expected_revision!r}: 100}}, got {revision_percent}"
+              )
+          print(f"Production traffic migrated to {expected_revision}.")
+          PY
 
       - name: Keep manual stub revision isolated
         if: env.PREDICTOR_MODE == 'stub'

@@ -26,3 +26,5 @@ def test_github_runner_does_not_call_internal_cloud_run_url() -> None:
     assert "Smoke test tagged revision" not in workflow
     assert "Verify tagged revision configuration" in workflow
     assert "Cloud Build-smoked digest and exact model config" in workflow
+    assert "status.traffic[0]" not in workflow
+    assert "revision_percent != {expected_revision: 100}" in workflow
