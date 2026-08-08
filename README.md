@@ -860,14 +860,18 @@ Variables의 `ML_PREDICTOR_MODE=mlflow`, `ML_MODEL_NAME`, 1 이상의 정확한 
 Cloud Build 전에 실패하므로 코드 병합만으로 Stub이 운영에 자동 승격되지 않습니다.
 수동 실행도 `mlflow`일 때는 모델 이름과 숫자 버전을 명시해야 합니다.
 
-MLflow 배포는 기존 Cloud Run 서비스의 `MLFLOW_TRACKING_URI`와 Secret Manager로
-연결된 `MLFLOW_TRACKING_USERNAME`, `MLFLOW_TRACKING_PASSWORD`도 Cloud Build 전에
-확인합니다. Workflow는 새 이미지를 Digest로 고정하고 다음 순서로 배포합니다.
+배포는 기존 Cloud Run 서비스의 `MLFLOW_TRACKING_URI`와 Secret Manager로 연결된
+`MLFLOW_TRACKING_USERNAME`, `MLFLOW_TRACKING_PASSWORD`도 Cloud Build 전에 확인합니다.
+서비스의 Ingress가 `internal`이므로 외부 GitHub runner가 태그 URL을 직접 호출하지
+않습니다. 대신 GCP 내부 Cloud Build에서 빌드한 이미지를 실행하고 같은 Secret을
+안전하게 주입해 실제 모델 로딩과 API를 검증합니다. Workflow는 검증된 이미지를
+Digest로 고정하고 다음 순서로 배포합니다.
 
 ```text
-새 리비전 생성(트래픽 0%, 태그 URL)
-→ /ready 및 54필드 /predict 스모크 테스트
-→ 응답 model_name/model_version 검증
+Cloud Build에서 이미지 실행
+→ /ready 및 54필드 /predict, model_name/model_version 검증
+→ 검증된 Digest로 새 리비전 생성(트래픽 0%, 태그 URL)
+→ 리비전 Ready·Digest·모델 환경변수 일치 검증
 → 검증된 리비전에 트래픽 100% 이동
 ```
 
@@ -875,8 +879,9 @@ MLflow 배포는 기존 Cloud Run 서비스의 `MLFLOW_TRACKING_URI`와 Secret M
 리비전이 계속 요청을 처리합니다. 승격 시점의 기존 진행 중 요청도 Cloud Run에서
 완료되며, 새 요청부터 새 리비전으로 전달됩니다. 운영에서는
 `MLFLOW_TRACKING_USERNAME`, `MLFLOW_TRACKING_PASSWORD`를 Cloud Run Secret Manager
-환경변수로 미리 연결해야 합니다. 수동 `stub` 실행은 태그 URL 스모크 테스트까지만
-수행하며 검증에 성공해도 해당 리비전을 0% 트래픽으로 격리합니다.
+환경변수로 미리 연결해야 합니다. Cloud Build 실행 서비스 계정도 두 Secret의
+페이로드를 읽을 수 있어야 합니다. 수동 `stub` 실행은 이미지와 0% 태그 리비전
+검증까지만 수행하며 성공해도 해당 리비전을 운영 트래픽에서 격리합니다.
 
 ### Serving·Training 이미지 변경 범위
 
