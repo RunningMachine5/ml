@@ -1,6 +1,7 @@
 """FDShield 모델 서빙 FastAPI 애플리케이션."""
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
+from fdshield_ml.common.preprocessing import FeaturePreprocessingError
 from fdshield_ml.serving.predictor import Predictor, StubPredictor
 from fdshield_ml.serving.schemas import (
     HealthResponse,
@@ -30,7 +31,11 @@ def create_app(predictor: Predictor | None = None) -> FastAPI:
         request: Request,
     ) -> PredictionResponse:
         serving_predictor: Predictor = request.app.state.predictor
-        return serving_predictor.predict(payload)
+        try:
+            return serving_predictor.predict(payload)
+        except FeaturePreprocessingError as exc:
+            # 형식은 맞지만 전처리할 수 없는 값도 서버 오류가 아니라 요청 오류다.
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     return app
 

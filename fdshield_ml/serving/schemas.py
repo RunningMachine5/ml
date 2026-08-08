@@ -4,7 +4,10 @@ from typing import Self
 
 from pydantic import BaseModel, Field, model_validator
 
-from fdshield_ml.common.feature_contract import FORBIDDEN_INFERENCE_COLUMNS
+from fdshield_ml.common.feature_contract import (
+    FORBIDDEN_INFERENCE_COLUMNS,
+    MODEL_INPUT_COLUMN_SET,
+)
 
 
 FeatureValue = str | int | float | bool | None
@@ -18,12 +21,19 @@ class PredictionRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_feature_contract(self) -> Self:
-        """입력 확정 전에는 데이터 누수·민감 식별 컬럼만 차단한다."""
+        """Backend와 합의한 54개 원본 컬럼만 정확히 허용한다."""
 
         provided = set(self.features)
         forbidden = sorted(provided & FORBIDDEN_INFERENCE_COLUMNS)
-        if forbidden:
-            raise ValueError(f"Invalid inference features: forbidden={forbidden}")
+        missing = sorted(MODEL_INPUT_COLUMN_SET - provided)
+        unknown = sorted(
+            provided - MODEL_INPUT_COLUMN_SET - FORBIDDEN_INFERENCE_COLUMNS
+        )
+        if forbidden or missing or unknown:
+            raise ValueError(
+                "Invalid inference features: "
+                f"forbidden={forbidden}, missing={missing}, unknown={unknown}"
+            )
         return self
 
 
