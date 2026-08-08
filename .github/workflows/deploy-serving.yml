@@ -292,15 +292,27 @@ jobs:
           echo "TAGGED_URL=$tagged_url" >> "$GITHUB_ENV"
           echo "NEW_REVISION=$latest_created_revision" >> "$GITHUB_ENV"
 
+      - name: Issue Cloud Run identity token for smoke test
+        id: smoke-auth
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          token_format: id_token
+          id_token_audience: ${{ env.SERVICE_URL }}
+
       - name: Smoke test tagged revision
+        env:
+          IDENTITY_TOKEN: ${{ steps.smoke-auth.outputs.id_token }}
         run: |
-          identity_token="$(gcloud auth print-identity-token --audiences="$SERVICE_URL")"
+          test -n "$IDENTITY_TOKEN"
           curl --fail --silent --show-error \
-            --header "Authorization: Bearer $identity_token" \
+            --header "Authorization: Bearer $IDENTITY_TOKEN" \
             "$TAGGED_URL/ready"
           prediction="$(
             curl --fail --silent --show-error \
-              --header "Authorization: Bearer $identity_token" \
+              --header "Authorization: Bearer $IDENTITY_TOKEN" \
               --header "Content-Type: application/json" \
               --data @deploy/smoke-request.json \
               "$TAGGED_URL/predict"
