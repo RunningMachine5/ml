@@ -708,7 +708,7 @@ uv run uvicorn fdshield_ml.serving.app:app --host 0.0.0.0 --port 8001
 | `ML_PREDICTOR_MODE` | `stub` | `stub` 또는 `mlflow` 선택 |
 | `ML_FRAUD_THRESHOLD` | `0.55` | 사기로 판정할 확률 임계값 |
 | `ML_MODEL_NAME` | `fdshield-rule-based-stub` | Registry 모델 이름 및 응답 모델명 |
-| `ML_MODEL_VERSION` | `0` | 배포할 정확한 숫자 Registry 버전 |
+| `ML_MODEL_VERSION` | `0` | 로컬 Stub 값. `mlflow` 운영 배포는 1 이상의 정확한 숫자 Registry 버전 필수 |
 | `MLFLOW_TRACKING_URI` | 없음 | MLflow HTTPS 주소 (`mlflow` 모드 필수) |
 | `MLFLOW_TRACKING_USERNAME` | 없음 | MLflow Basic Auth 사용자 (`mlflow` 모드 필수) |
 | `MLFLOW_TRACKING_PASSWORD` | 없음 | MLflow Basic Auth 비밀번호 (`mlflow` 모드 필수) |
@@ -734,16 +734,21 @@ docker compose --env-file .env.serving -f compose.serving.yml up --build
 
 ## Cloud Run Training Job
 
-Training Job은 같은 환경변수로 로컬 파일과 GCS 객체를 선택합니다. 로컬에서는
-`data/open/train.csv`를 직접 읽고, Cloud Run에서는 GCS 객체를 컨테이너의 임시
-디렉터리로 내려받습니다. `TRAINING_MODE=train`이면 공통 전처리로 XGBoost를 학습하고
+Training Job은 같은 환경변수로 로컬 파일과 GCS 객체를 선택합니다. 운영 학습은
+생성형 데이터의 전처리본 `train.csv`와 행 순서가 같은 원본 `transactions.csv`를
+함께 사용합니다. 전처리본의 91개 모델 피처와 라벨을 검증하고, 원본의
+`Transaction_Datetime`을 기준으로 2026-04-01 이전은 학습, 이후는 검증 데이터로
+분리합니다. Cloud Run에서는 두 GCS 객체를 컨테이너의 임시 디렉터리로 내려받습니다.
+`TRAINING_MODE=train`이면 XGBoost를 학습하고
 지표를 기록한 뒤 MLflow Model Registry에 새 버전을 등록합니다. PR-AUC와 Recall
 기준을 모두 통과하고 `MLFLOW_AUTO_PROMOTE=true`인 경우에만 지정한 alias를 새
 버전으로 이동합니다. `TRAINING_MODE=validate`는 데이터 검증 Run만 남깁니다.
 
 ```text
-로컬 실행     TRAINING_DATA_URI=data/open/train.csv
-Cloud Run    TRAINING_DATA_URI=gs://fdshield-ml-data-801817539291/datasets/open/v1/train.csv
+로컬 실행     TRAINING_DATA_URI=data/open/generated/train.csv
+              TRAINING_TRANSACTIONS_URI=data/open/generated/transactions.csv
+Cloud Run    TRAINING_DATA_URI=gs://fdshield-ml-data-801817539291/datasets/synthetic/v1/train.csv
+              TRAINING_TRANSACTIONS_URI=gs://fdshield-ml-data-801817539291/datasets/synthetic/v1/transactions.csv
 ```
 
 GCS 버킷은 공개하지 않습니다. Cloud Run Job의 서비스 계정이
@@ -770,7 +775,8 @@ docker build -f Dockerfile.training -t fdshield/ml-training:local .
 docker run --rm `
   --env-file .env.training `
   -e TRAINING_DATA_URI=/data/train.csv `
-  --mount "type=bind,source=$($PWD.Path)\data\open,target=/data,readonly" `
+  -e TRAINING_TRANSACTIONS_URI=/data/transactions.csv `
+  --mount "type=bind,source=$($PWD.Path)\data\open\generated,target=/data,readonly" `
   fdshield/ml-training:local
 ```
 
@@ -788,7 +794,9 @@ docker run --rm `
 | 환경변수 | 로컬 값 | Cloud Run 값 | 역할 |
 |---|---|---|---|
 | `TRAINING_JOB_TYPE` | `binary` | `binary` | 실행할 학습 작업 종류 |
-| `TRAINING_DATA_URI` | `data/open/train.csv` | `gs://fdshield-ml-data-801817539291/datasets/open/v1/train.csv` | 학습 CSV 위치 |
+| `TRAINING_DATA_URI` | `data/open/generated/train.csv` | `gs://fdshield-ml-data-801817539291/datasets/synthetic/v1/train.csv` | 전처리된 91개 피처와 `Is_Fraud`가 있는 학습 CSV |
+| `TRAINING_TRANSACTIONS_URI` | `data/open/generated/transactions.csv` | `gs://fdshield-ml-data-801817539291/datasets/synthetic/v1/transactions.csv` | 행 순서가 같은 원본 거래 CSV(시간 분할 검증용) |
+| `TRAINING_SPLIT_DATETIME` | `2026-04-01 00:00:00` | `2026-04-01 00:00:00` | 학습/검증 시간 경계 |
 | `MLFLOW_TRACKING_URI` | `https://mlflow.fdshield.cloud` | `https://mlflow.fdshield.cloud` | MLflow Tracking Server 주소 |
 | `MLFLOW_TRACKING_USERNAME` | 로컬 전용 계정 | Secret Manager 주입 | MLflow Basic Auth 사용자 |
 | `MLFLOW_TRACKING_PASSWORD` | 로컬 비밀번호 | Secret Manager 주입 | MLflow Basic Auth 비밀번호 |
@@ -837,8 +845,9 @@ gcloud builds submit \
 → Job에 설정된 이미지 Digest 검증
 ```
 
-배포 Workflow는 기존 Job의 `TRAINING_DATA_URI`, MLflow Secret, 실행 서비스 계정,
-CPU·메모리·Timeout 설정을 변경하지 않습니다. 또한 코드가 병합될 때 실제 학습이
+배포 Workflow는 기존 Job의 `TRAINING_DATA_URI`, `TRAINING_TRANSACTIONS_URI`,
+`TRAINING_SPLIT_DATETIME`, MLflow Secret, 실행 서비스 계정, CPU·메모리·Timeout
+설정을 변경하지 않습니다. 또한 코드가 병합될 때 실제 학습이
 자동으로 시작되지 않도록 `gcloud run jobs execute`를 호출하지 않습니다. 학습은
 별도의 명시적인 요청 Workflow 또는 관리자 API에서 실행합니다.
 
@@ -847,9 +856,15 @@ CPU·메모리·Timeout 설정을 변경하지 않습니다. 또한 코드가 �
 
 ### Serving 모델 무중단 배포
 
-`.github/workflows/deploy-serving.yml`의 수동 실행에서 Registry의 정확한 숫자
-`model_version`을 지정합니다. Workflow는 새 이미지를 Digest로 고정하고 다음 순서로
-배포합니다.
+`.github/workflows/deploy-serving.yml`은 `main` Push 자동 실행에서 GitHub Repository
+Variables의 `ML_PREDICTOR_MODE=mlflow`, `ML_MODEL_NAME`, 1 이상의 정확한 숫자
+`ML_MODEL_VERSION`을 요구합니다. 값이 없거나 `stub`, `0`, `latest`, alias이면 인증과
+Cloud Build 전에 실패하므로 코드 병합만으로 Stub이 운영에 자동 승격되지 않습니다.
+수동 실행도 `mlflow`일 때는 모델 이름과 숫자 버전을 명시해야 합니다.
+
+MLflow 배포는 기존 Cloud Run 서비스의 `MLFLOW_TRACKING_URI`와 Secret Manager로
+연결된 `MLFLOW_TRACKING_USERNAME`, `MLFLOW_TRACKING_PASSWORD`도 Cloud Build 전에
+확인합니다. Workflow는 새 이미지를 Digest로 고정하고 다음 순서로 배포합니다.
 
 ```text
 새 리비전 생성(트래픽 0%, 태그 URL)
@@ -862,7 +877,8 @@ CPU·메모리·Timeout 설정을 변경하지 않습니다. 또한 코드가 �
 리비전이 계속 요청을 처리합니다. 승격 시점의 기존 진행 중 요청도 Cloud Run에서
 완료되며, 새 요청부터 새 리비전으로 전달됩니다. 운영에서는
 `MLFLOW_TRACKING_USERNAME`, `MLFLOW_TRACKING_PASSWORD`를 Cloud Run Secret Manager
-환경변수로 미리 연결해야 합니다.
+환경변수로 미리 연결해야 합니다. 수동 `stub` 실행은 태그 URL 스모크 테스트까지만
+수행하며 검증에 성공해도 해당 리비전을 0% 트래픽으로 격리합니다.
 
 ### Serving·Training 이미지 변경 범위
 

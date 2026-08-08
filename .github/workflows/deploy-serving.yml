@@ -42,15 +42,74 @@ env:
   GCP_REGION: asia-northeast3
   CLOUD_RUN_SERVICE: fdshield-ml-serving
   IMAGE_NAME: asia-northeast3-docker.pkg.dev/project-4cc3406c-72d8-4907-a5d/fdshield/ml-serving
-  PREDICTOR_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.predictor_mode || vars.ML_PREDICTOR_MODE || 'stub' }}
-  MODEL_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.model_name || vars.ML_MODEL_NAME || 'fdshield-fraud-detector' }}
-  MODEL_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.model_version || vars.ML_MODEL_VERSION || '0' }}
 
 jobs:
   test-build-deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - name: Resolve and validate deployment configuration
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REPOSITORY_PREDICTOR_MODE: ${{ vars.ML_PREDICTOR_MODE }}
+          REPOSITORY_MODEL_NAME: ${{ vars.ML_MODEL_NAME }}
+          REPOSITORY_MODEL_VERSION: ${{ vars.ML_MODEL_VERSION }}
+          DISPATCH_PREDICTOR_MODE: ${{ inputs.predictor_mode }}
+          DISPATCH_MODEL_NAME: ${{ inputs.model_name }}
+          DISPATCH_MODEL_VERSION: ${{ inputs.model_version }}
+          WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+        run: |
+          fail() {
+            echo "::error::$1"
+            exit 1
+          }
+
+          [[ -n "$WORKLOAD_IDENTITY_PROVIDER" ]] || fail "GCP_WORKLOAD_IDENTITY_PROVIDER repository variable is required."
+          [[ -n "$DEPLOY_SERVICE_ACCOUNT" ]] || fail "GCP_SERVICE_ACCOUNT repository variable is required."
+
+          case "$EVENT_NAME" in
+            push)
+              predictor_mode="${REPOSITORY_PREDICTOR_MODE,,}"
+              model_name="$REPOSITORY_MODEL_NAME"
+              model_version="$REPOSITORY_MODEL_VERSION"
+              [[ "$predictor_mode" == "mlflow" ]] || fail "Automatic main deployment requires ML_PREDICTOR_MODE=mlflow; stub and empty values are never promoted."
+              ;;
+            workflow_dispatch)
+              predictor_mode="${DISPATCH_PREDICTOR_MODE,,}"
+              model_name="$DISPATCH_MODEL_NAME"
+              model_version="$DISPATCH_MODEL_VERSION"
+              ;;
+            *)
+              fail "Unsupported deployment event: $EVENT_NAME"
+              ;;
+          esac
+
+          case "$predictor_mode" in
+            mlflow)
+              [[ -n "$model_name" ]] || fail "MLflow deployment requires an explicit ML_MODEL_NAME."
+              [[ "$model_name" != *,* ]] || fail "ML_MODEL_NAME cannot contain a comma."
+              [[ "$model_name" != *$'\n'* && "$model_name" != *$'\r'* ]] || fail "ML_MODEL_NAME must be a single-line value."
+              [[ "$model_version" =~ ^[1-9][0-9]*$ ]] || fail "MLflow deployment requires an exact positive numeric ML_MODEL_VERSION."
+              ;;
+            stub)
+              [[ "$EVENT_NAME" == "workflow_dispatch" ]] || fail "Stub deployment is allowed only as an explicit manual smoke test."
+              model_name="fdshield-rule-based-stub"
+              model_version="0"
+              ;;
+            *)
+              fail "PREDICTOR_MODE must be mlflow or stub."
+              ;;
+          esac
+
+          {
+            echo "PREDICTOR_MODE=$predictor_mode"
+            echo "MODEL_NAME=$model_name"
+            echo "MODEL_VERSION=$model_version"
+          } >> "$GITHUB_ENV"
+
+          echo "Deployment configuration accepted: mode=$predictor_mode, model=$model_name, version=$model_version"
+
       - name: Checkout repository
         uses: actions/checkout@v6
 
@@ -75,6 +134,58 @@ jobs:
 
       - name: Install Google Cloud CLI
         uses: google-github-actions/setup-gcloud@v3
+
+      - name: Validate Cloud Run MLflow runtime configuration
+        if: env.PREDICTOR_MODE == 'mlflow'
+        run: |
+          service_config="$RUNNER_TEMP/cloud-run-service.json"
+          if ! gcloud run services describe "$CLOUD_RUN_SERVICE" \
+            --project="$GCP_PROJECT_ID" \
+            --region="$GCP_REGION" \
+            --format=json > "$service_config"; then
+            echo "::error::Cloud Run service $CLOUD_RUN_SERVICE must exist and contain the MLflow runtime configuration before deployment."
+            exit 1
+          fi
+
+          python3 - "$service_config" <<'PY'
+          import json
+          import sys
+
+          service = json.load(open(sys.argv[1], encoding="utf-8"))
+          containers = (
+              service.get("spec", {})
+              .get("template", {})
+              .get("spec", {})
+              .get("containers", [])
+          )
+          if not containers:
+              raise SystemExit("::error::Cloud Run service has no container configuration.")
+
+          environment = {
+              item.get("name"): item
+              for item in containers[0].get("env", [])
+              if item.get("name")
+          }
+          errors = []
+          tracking_uri = environment.get("MLFLOW_TRACKING_URI", {}).get("value", "")
+          if not tracking_uri.startswith(("http://", "https://")):
+              errors.append("MLFLOW_TRACKING_URI must be a non-empty HTTP(S) value")
+
+          for name in ("MLFLOW_TRACKING_USERNAME", "MLFLOW_TRACKING_PASSWORD"):
+              secret_name = (
+                  environment.get(name, {})
+                  .get("valueFrom", {})
+                  .get("secretKeyRef", {})
+                  .get("name", "")
+              )
+              if not secret_name:
+                  errors.append(f"{name} must be connected through Secret Manager")
+
+          if errors:
+              raise SystemExit("::error::" + "; ".join(errors))
+
+          print("Cloud Run MLflow URI and Secret Manager references are configured.")
+          PY
 
       - name: Build and push immutable image with Cloud Build
         env:
@@ -140,17 +251,6 @@ jobs:
             exit 1
           fi
           echo "DEPLOY_DIGEST=$deploy_digest" >> "$GITHUB_ENV"
-
-      - name: Validate model deployment input
-        run: |
-          if [[ "$PREDICTOR_MODE" == "mlflow" && ! "$MODEL_VERSION" =~ ^[0-9]+$ ]]; then
-            echo "MLflow deployment requires an exact numeric MODEL_VERSION."
-            exit 1
-          fi
-          if [[ "$PREDICTOR_MODE" != "mlflow" && "$PREDICTOR_MODE" != "stub" ]]; then
-            echo "PREDICTOR_MODE must be mlflow or stub."
-            exit 1
-          fi
 
       - name: Deploy tagged revision without production traffic
         run: |
@@ -218,6 +318,7 @@ jobs:
           PY
 
       - name: Migrate all production traffic to verified revision
+        if: env.PREDICTOR_MODE == 'mlflow'
         run: |
           gcloud run services update-traffic "$CLOUD_RUN_SERVICE" \
             --project="$GCP_PROJECT_ID" \
@@ -226,6 +327,7 @@ jobs:
             --quiet
 
       - name: Verify production traffic target
+        if: env.PREDICTOR_MODE == 'mlflow'
         run: |
           active_revision="$(
             gcloud run services describe "$CLOUD_RUN_SERVICE" \
@@ -238,3 +340,8 @@ jobs:
             exit 1
           fi
           echo "Production traffic migrated to $NEW_REVISION."
+
+      - name: Keep manual stub revision isolated
+        if: env.PREDICTOR_MODE == 'stub'
+        run: |
+          echo "Manual stub smoke test passed. The tagged revision remains at 0% production traffic."
