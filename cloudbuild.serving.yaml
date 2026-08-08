@@ -9,6 +9,76 @@ steps:
       - ${_DEPLOY_IMAGE}
       - .
 
+  - id: smoke-serving-image
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    secretEnv:
+      - MLFLOW_TRACKING_USERNAME
+      - MLFLOW_TRACKING_PASSWORD
+    args:
+      - -ceu
+      - |
+        container_name="fdshield-serving-smoke"
+        cleanup() {
+          docker logs "$container_name" || true
+          docker rm --force "$container_name" >/dev/null 2>&1 || true
+        }
+        trap cleanup EXIT
+
+        docker run --detach \
+          --name "$container_name" \
+          --env "ML_PREDICTOR_MODE=${_PREDICTOR_MODE}" \
+          --env "ML_MODEL_NAME=${_MODEL_NAME}" \
+          --env "ML_MODEL_VERSION=${_MODEL_VERSION}" \
+          --env "MLFLOW_TRACKING_URI=${_MLFLOW_TRACKING_URI}" \
+          --env MLFLOW_TRACKING_USERNAME \
+          --env MLFLOW_TRACKING_PASSWORD \
+          --volume /workspace/deploy/smoke-request.json:/tmp/smoke-request.json:ro \
+          "${_DEPLOY_IMAGE}"
+
+        ready="false"
+        for attempt in $(seq 1 60); do
+          if docker exec "$container_name" python -c \
+            'import json, urllib.request; assert json.load(urllib.request.urlopen("http://127.0.0.1:8080/ready", timeout=5)) == {"status": "ready"}'; then
+            ready="true"
+            break
+          fi
+          echo "Waiting for serving image readiness ($attempt/60)"
+          sleep 2
+        done
+        test "$ready" = "true"
+
+        docker exec -i "$container_name" \
+          python - "${_MODEL_NAME}" "${_MODEL_VERSION}" <<'PY'
+        import json
+        import sys
+        import urllib.request
+
+        expected_name, expected_version = sys.argv[1:]
+        with open("/tmp/smoke-request.json", encoding="utf-8") as request_file:
+            payload = json.dumps(json.load(request_file)).encode("utf-8")
+        request = urllib.request.Request(
+            "http://127.0.0.1:8080/predict",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            prediction = json.load(response)
+        if prediction.get("model_name") != expected_name:
+            raise SystemExit("Smoke prediction returned a different model name")
+        if prediction.get("model_version") != expected_version:
+            raise SystemExit("Smoke prediction returned a different model version")
+        print("Serving image loaded the exact MLflow model and passed /predict.")
+        PY
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/${_MLFLOW_USERNAME_SECRET}/versions/latest
+      env: MLFLOW_TRACKING_USERNAME
+    - versionName: projects/$PROJECT_ID/secrets/${_MLFLOW_PASSWORD_SECRET}/versions/latest
+      env: MLFLOW_TRACKING_PASSWORD
+
 images:
   - ${_DEPLOY_IMAGE}
 

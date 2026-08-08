@@ -136,7 +136,6 @@ jobs:
         uses: google-github-actions/setup-gcloud@v3
 
       - name: Validate Cloud Run MLflow runtime configuration
-        if: env.PREDICTOR_MODE == 'mlflow'
         run: |
           service_config="$RUNNER_TEMP/cloud-run-service.json"
           if ! gcloud run services describe "$CLOUD_RUN_SERVICE" \
@@ -147,11 +146,13 @@ jobs:
             exit 1
           fi
 
-          python3 - "$service_config" <<'PY'
+          python3 - "$service_config" "$GITHUB_ENV" <<'PY'
           import json
+          import re
           import sys
 
-          service = json.load(open(sys.argv[1], encoding="utf-8"))
+          service_path, github_env_path = sys.argv[1:]
+          service = json.load(open(service_path, encoding="utf-8"))
           containers = (
               service.get("spec", {})
               .get("template", {})
@@ -168,9 +169,12 @@ jobs:
           }
           errors = []
           tracking_uri = environment.get("MLFLOW_TRACKING_URI", {}).get("value", "")
-          if not tracking_uri.startswith(("http://", "https://")):
+          if not tracking_uri.startswith(("http://", "https://")) or any(
+              char in tracking_uri for char in "\r\n,"
+          ):
               errors.append("MLFLOW_TRACKING_URI must be a non-empty HTTP(S) value")
 
+          secret_names = {}
           for name in ("MLFLOW_TRACKING_USERNAME", "MLFLOW_TRACKING_PASSWORD"):
               secret_name = (
                   environment.get(name, {})
@@ -178,11 +182,24 @@ jobs:
                   .get("secretKeyRef", {})
                   .get("name", "")
               )
-              if not secret_name:
+              if not re.fullmatch(r"[A-Za-z0-9_-]+", secret_name):
                   errors.append(f"{name} must be connected through Secret Manager")
+              else:
+                  secret_names[name] = secret_name
 
           if errors:
               raise SystemExit("::error::" + "; ".join(errors))
+
+          with open(github_env_path, "a", encoding="utf-8") as github_env:
+              github_env.write(f"MLFLOW_TRACKING_URI={tracking_uri}\n")
+              github_env.write(
+                  "MLFLOW_USERNAME_SECRET="
+                  f"{secret_names['MLFLOW_TRACKING_USERNAME']}\n"
+              )
+              github_env.write(
+                  "MLFLOW_PASSWORD_SECRET="
+                  f"{secret_names['MLFLOW_TRACKING_PASSWORD']}\n"
+              )
 
           print("Cloud Run MLflow URI and Secret Manager references are configured.")
           PY
@@ -195,7 +212,7 @@ jobs:
             gcloud builds submit \
               --project="$GCP_PROJECT_ID" \
               --config="cloudbuild.serving.yaml" \
-              --substitutions="_DEPLOY_IMAGE=$DEPLOY_IMAGE" \
+              --substitutions="_DEPLOY_IMAGE=$DEPLOY_IMAGE,_PREDICTOR_MODE=$PREDICTOR_MODE,_MODEL_NAME=$MODEL_NAME,_MODEL_VERSION=$MODEL_VERSION,_MLFLOW_TRACKING_URI=$MLFLOW_TRACKING_URI,_MLFLOW_USERNAME_SECRET=$MLFLOW_USERNAME_SECRET,_MLFLOW_PASSWORD_SECRET=$MLFLOW_PASSWORD_SECRET" \
               --async \
               --format="value(id)" \
               --quiet \
@@ -292,44 +309,70 @@ jobs:
           echo "TAGGED_URL=$tagged_url" >> "$GITHUB_ENV"
           echo "NEW_REVISION=$latest_created_revision" >> "$GITHUB_ENV"
 
-      - name: Issue Cloud Run identity token for smoke test
-        id: smoke-auth
-        uses: google-github-actions/auth@v3
-        with:
-          project_id: ${{ env.GCP_PROJECT_ID }}
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
-          token_format: id_token
-          id_token_audience: ${{ env.SERVICE_URL }}
-          id_token_include_email: true
-
-      - name: Smoke test tagged revision
-        env:
-          IDENTITY_TOKEN: ${{ steps.smoke-auth.outputs.id_token }}
+      - name: Verify tagged revision configuration
         run: |
-          test -n "$IDENTITY_TOKEN"
-          curl --fail-with-body --silent --show-error \
-            --retry 12 --retry-delay 5 --retry-all-errors \
-            --header "Authorization: Bearer $IDENTITY_TOKEN" \
-            "$TAGGED_URL/ready"
-          prediction="$(
-            curl --fail-with-body --silent --show-error \
-              --retry 12 --retry-delay 5 --retry-all-errors \
-              --header "Authorization: Bearer $IDENTITY_TOKEN" \
-              --header "Content-Type: application/json" \
-              --data @deploy/smoke-request.json \
-              "$TAGGED_URL/predict"
-          )"
-          python3 - "$MODEL_NAME" "$MODEL_VERSION" "$prediction" <<'PY'
+          python3 - \
+            "$NEW_REVISION" \
+            "$REVISION_TAG" \
+            "$DEPLOY_DIGEST" \
+            "$PREDICTOR_MODE" \
+            "$MODEL_NAME" \
+            "$MODEL_VERSION" \
+            "$RUNNER_TEMP/service.json" <<'PY'
           import json
           import sys
 
-          expected_name, expected_version, payload = sys.argv[1:]
-          response = json.loads(payload)
-          if response.get("model_name") != expected_name:
-              raise SystemExit("Smoke prediction returned a different model name")
-          if response.get("model_version") != expected_version:
-              raise SystemExit("Smoke prediction returned a different model version")
+          (
+              expected_revision,
+              expected_tag,
+              expected_digest,
+              expected_mode,
+              expected_name,
+              expected_version,
+              service_path,
+          ) = sys.argv[1:]
+          service = json.load(open(service_path, encoding="utf-8"))
+          status = service.get("status", {})
+          if status.get("latestReadyRevisionName") != expected_revision:
+              raise SystemExit("::error::New revision is not the latest ready revision")
+
+          tagged_target = next(
+              (
+                  target
+                  for target in status.get("traffic", [])
+                  if target.get("tag") == expected_tag
+              ),
+              {},
+          )
+          if tagged_target.get("revisionName") != expected_revision:
+              raise SystemExit("::error::Revision tag does not target the new revision")
+
+          containers = (
+              service.get("spec", {})
+              .get("template", {})
+              .get("spec", {})
+              .get("containers", [])
+          )
+          if not containers or containers[0].get("image") != expected_digest:
+              raise SystemExit("::error::New revision does not use the verified image digest")
+
+          environment = {
+              item.get("name"): item.get("value")
+              for item in containers[0].get("env", [])
+              if item.get("name")
+          }
+          expected_environment = {
+              "ML_PREDICTOR_MODE": expected_mode,
+              "ML_MODEL_NAME": expected_name,
+              "ML_MODEL_VERSION": expected_version,
+          }
+          if any(
+              environment.get(name) != value
+              for name, value in expected_environment.items()
+          ):
+              raise SystemExit("::error::New revision model configuration is incorrect")
+
+          print("Tagged revision uses the Cloud Build-smoked digest and exact model config.")
           PY
 
       - name: Migrate all production traffic to verified revision
