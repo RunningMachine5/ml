@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from collections.abc import Callable
 
 import pandas as pd
 import pytest
 
+from fdshield_ml.common.preprocessing import preprocess_frame
 from fdshield_ml.training.data_loader import (
     GCSObjectLocation,
     TrainingDataError,
@@ -14,6 +16,9 @@ from fdshield_ml.training.data_loader import (
     inspect_training_csv,
     materialize_training_data,
 )
+
+
+RawFeaturesFactory = Callable[..., dict[str, object]]
 
 
 def write_training_csv(path: Path) -> None:
@@ -123,4 +128,59 @@ def test_training_csv_rejects_invalid_label(tmp_path: Path) -> None:
     ).to_csv(source, index=False)
 
     with pytest.raises(TrainingDataError, match="Invalid training labels"):
+        inspect_training_csv(source)
+
+
+def test_preprocessed_training_csv_validates_with_companion_transactions(
+    tmp_path: Path,
+    raw_features_factory: RawFeaturesFactory,
+) -> None:
+    datetimes = [
+        "2026-03-30 10:00:00",
+        "2026-03-31 11:00:00",
+        "2026-04-01 12:00:00",
+        "2026-04-02 13:00:00",
+    ]
+    labels = [0, 1, 0, 1]
+    raw = pd.DataFrame(
+        [
+            raw_features_factory(Transaction_Datetime=value)
+            for value in datetimes
+        ]
+    )
+    training = preprocess_frame(raw)
+    training["Is_Fraud"] = labels
+    training_path = tmp_path / "train.csv"
+    transactions_path = tmp_path / "transactions.csv"
+    training.to_csv(training_path, index=False)
+    pd.DataFrame(
+        {
+            "Transaction_Datetime": datetimes,
+            "Is_Fraud": labels,
+        }
+    ).to_csv(transactions_path, index=False)
+
+    summary = inspect_training_csv(
+        training_path,
+        transactions_path=transactions_path,
+        minimum_fraud_rows_per_split=1,
+    )
+
+    assert summary.row_count == 4
+    assert summary.column_count == 92
+    assert summary.normal_count == 2
+    assert summary.fraud_count == 2
+
+
+def test_preprocessed_training_csv_requires_companion_transactions(
+    tmp_path: Path,
+    raw_features_factory: RawFeaturesFactory,
+) -> None:
+    raw = pd.DataFrame([raw_features_factory() for _ in range(2)])
+    training = preprocess_frame(raw)
+    training["Is_Fraud"] = [0, 1]
+    source = tmp_path / "train.csv"
+    training.to_csv(source, index=False)
+
+    with pytest.raises(TrainingDataError, match="requires companion transactions"):
         inspect_training_csv(source)

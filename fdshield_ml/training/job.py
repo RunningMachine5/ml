@@ -8,8 +8,9 @@ Stub URI는 인프라 실행만 확인하고, 로컬 경로와 GCS URI는 학습
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, ExitStack
 from dataclasses import asdict, dataclass
+from datetime import datetime
 import json
 import os
 from pathlib import Path
@@ -27,6 +28,7 @@ from fdshield_ml.training.job_tracking import (
     TrainingTrackingError,
     log_data_validation_run,
 )
+from fdshield_ml.training.dataset import DEFAULT_SPLIT_DATETIME
 from fdshield_ml.training.production import (
     ProductionTrainingConfig,
     ProductionTrainingError,
@@ -43,7 +45,7 @@ ValidationRunLogger = Callable[
     str,
 ]
 ProductionTrainingRunner = Callable[
-    [str | Path, str, ProductionTrainingConfig],
+    [str | Path, str, ProductionTrainingConfig, str | Path | None],
     ProductionTrainingResult,
 ]
 
@@ -55,6 +57,8 @@ class TrainingJobConfig:
     job_type: str
     data_uri: str
     experiment_name: str
+    transactions_uri: str = ""
+    split_datetime: str = DEFAULT_SPLIT_DATETIME
     mode: str = "validate"
     registered_model_name: str = ""
     model_alias: str = "champion"
@@ -69,6 +73,12 @@ class TrainingJobConfig:
             "data_uri": environ.get("TRAINING_DATA_URI", "").strip(),
             "experiment_name": environ.get(
                 "MLFLOW_EXPERIMENT_NAME", ""
+            ).strip(),
+            "transactions_uri": environ.get(
+                "TRAINING_TRANSACTIONS_URI", ""
+            ).strip(),
+            "split_datetime": environ.get(
+                "TRAINING_SPLIT_DATETIME", DEFAULT_SPLIT_DATETIME
             ).strip(),
             "mode": environ.get("TRAINING_MODE", "validate").strip().lower(),
             "registered_model_name": environ.get(
@@ -107,6 +117,17 @@ class TrainingJobConfig:
         data_source_type(values["data_uri"])
         if values["mode"] == "train" and data_source_type(values["data_uri"]) == "stub":
             raise ValueError("TRAINING_MODE=train requires a local or gs:// data URI")
+        if values["transactions_uri"]:
+            if data_source_type(values["transactions_uri"]) == "stub":
+                raise ValueError(
+                    "TRAINING_TRANSACTIONS_URI requires a local or gs:// data URI"
+                )
+        try:
+            datetime.fromisoformat(values["split_datetime"])
+        except ValueError as exc:
+            raise ValueError(
+                "TRAINING_SPLIT_DATETIME must be an ISO datetime"
+            ) from exc
 
         auto_promote_value = environ.get("MLFLOW_AUTO_PROMOTE", "false").strip().lower()
         if auto_promote_value not in {"true", "false"}:
@@ -131,6 +152,7 @@ class TrainingJobConfig:
             auto_promote=self.auto_promote,
             minimum_pr_auc=self.minimum_pr_auc,
             minimum_recall=self.minimum_recall,
+            split_datetime=self.split_datetime,
         )
 
 
@@ -173,8 +195,18 @@ def run_data_validation(
         source_type=source_type,
     )
 
-    with materializer(config.data_uri) as data_path:
-        summary = inspect_training_csv(data_path)
+    with ExitStack() as stack:
+        data_path = stack.enter_context(materializer(config.data_uri))
+        transactions_path = (
+            stack.enter_context(materializer(config.transactions_uri))
+            if config.transactions_uri
+            else None
+        )
+        summary = inspect_training_csv(
+            data_path,
+            transactions_path=transactions_path,
+            split_datetime=config.split_datetime,
+        )
 
     _write_event(
         stream,
@@ -221,11 +253,18 @@ def run_model_training(
         source_type=source_type,
     )
 
-    with materializer(config.data_uri) as data_path:
+    with ExitStack() as stack:
+        data_path = stack.enter_context(materializer(config.data_uri))
+        transactions_path = (
+            stack.enter_context(materializer(config.transactions_uri))
+            if config.transactions_uri
+            else None
+        )
         result = training_runner(
             data_path,
             config.experiment_name,
             config.production_config(),
+            transactions_path,
         )
     _write_event(
         stream,

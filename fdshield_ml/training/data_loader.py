@@ -15,10 +15,28 @@ from google.api_core.exceptions import GoogleAPIError
 from google.auth.exceptions import GoogleAuthError
 from google.cloud import storage
 
+from fdshield_ml.common.feature_contract import MODEL_INPUT_COLUMNS
+from fdshield_ml.common.preprocessing import (
+    FeaturePreprocessingError,
+    preprocess_frame,
+)
 from fdshield_ml.common.features import (
     GROUP_COLUMN,
     TARGET_COLUMN,
     binary_target,
+)
+from fdshield_ml.training.dataset import (
+    DEFAULT_MIN_FRAUD_ROWS_PER_SPLIT,
+    DEFAULT_SPLIT_DATETIME,
+    LABEL_COLUMN,
+    TRANSACTION_DATETIME_COLUMN,
+    TrainingDatasetError,
+    aligned_transaction_datetimes,
+    detect_training_dataset_kind,
+    time_split_indices,
+    transaction_datetimes,
+    validate_binary_target,
+    validate_preprocessed_features,
 )
 
 
@@ -125,11 +143,61 @@ def inspect_training_csv(
     data_path: Path,
     *,
     chunk_size: int = 50_000,
+    transactions_path: Path | None = None,
+    split_datetime: str = DEFAULT_SPLIT_DATETIME,
+    minimum_fraud_rows_per_split: int = DEFAULT_MIN_FRAUD_ROWS_PER_SPLIT,
 ) -> TrainingDataSummary:
     """CSV의 계약과 이진 라벨 분포를 적은 메모리로 검증한다."""
 
     try:
         columns = pd.read_csv(data_path, nrows=0).columns
+        if LABEL_COLUMN in columns:
+            source = pd.read_csv(data_path, low_memory=False).reset_index(drop=True)
+            dataset_kind = detect_training_dataset_kind(source.columns)
+            target = validate_binary_target(source, context="training")
+            if dataset_kind == "raw":
+                preprocess_frame(source.loc[:, MODEL_INPUT_COLUMNS])
+                datetimes = transaction_datetimes(source, context="training")
+            else:
+                validate_preprocessed_features(source)
+                if transactions_path is None:
+                    raise TrainingDatasetError(
+                        "preprocessed training data requires companion transactions data"
+                    )
+                transaction_columns = pd.read_csv(
+                    transactions_path, nrows=0
+                ).columns
+                missing_transactions = {
+                    TRANSACTION_DATETIME_COLUMN,
+                    LABEL_COLUMN,
+                } - set(transaction_columns)
+                if missing_transactions:
+                    raise TrainingDatasetError(
+                        "transactions data is missing required columns: "
+                        f"{sorted(missing_transactions)}"
+                    )
+                transactions = pd.read_csv(
+                    transactions_path,
+                    usecols=[TRANSACTION_DATETIME_COLUMN, LABEL_COLUMN],
+                    low_memory=False,
+                )
+                datetimes = aligned_transaction_datetimes(source, transactions)
+            time_split_indices(
+                datetimes,
+                target,
+                split_datetime=split_datetime,
+                minimum_fraud_rows=minimum_fraud_rows_per_split,
+            )
+
+            fraud_count = int(target.sum())
+            return TrainingDataSummary(
+                row_count=len(target),
+                column_count=len(columns),
+                normal_count=len(target) - fraud_count,
+                fraud_count=fraud_count,
+                file_size_bytes=data_path.stat().st_size,
+            )
+
         missing = {TARGET_COLUMN, GROUP_COLUMN} - set(columns)
         if missing:
             raise TrainingDataError(
@@ -149,6 +217,8 @@ def inspect_training_csv(
             fraud_count += int(target.sum())
     except TrainingDataError:
         raise
+    except (TrainingDatasetError, FeaturePreprocessingError) as error:
+        raise TrainingDataError(f"Invalid training data: {error}") from error
     except ValueError as error:
         raise TrainingDataError(f"Invalid training labels: {error}") from error
     except (OSError, UnicodeDecodeError, pd.errors.ParserError) as error:

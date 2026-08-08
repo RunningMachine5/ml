@@ -76,6 +76,26 @@ def test_training_job_config_accepts_local_data_path() -> None:
     assert TrainingJobConfig.from_env(environ).data_uri == "data/open/train.csv"
 
 
+def test_training_job_config_reads_companion_uri_and_split_datetime() -> None:
+    environ = {
+        **VALID_ENV,
+        "TRAINING_TRANSACTIONS_URI": "data/generated/transactions.csv",
+        "TRAINING_SPLIT_DATETIME": "2026-05-01 00:00:00",
+    }
+
+    config = TrainingJobConfig.from_env(environ)
+
+    assert config.transactions_uri == "data/generated/transactions.csv"
+    assert config.split_datetime == "2026-05-01 00:00:00"
+
+
+def test_training_job_config_rejects_invalid_split_datetime() -> None:
+    environ = {**VALID_ENV, "TRAINING_SPLIT_DATETIME": "not-a-datetime"}
+
+    with pytest.raises(ValueError, match="TRAINING_SPLIT_DATETIME"):
+        TrainingJobConfig.from_env(environ)
+
+
 def test_training_job_config_requires_registered_model_in_train_mode() -> None:
     environ = {
         **VALID_ENV,
@@ -229,10 +249,14 @@ def test_training_job_main_reports_tracking_error(tmp_path: Path) -> None:
 def test_training_job_main_trains_registers_and_promotes_model(tmp_path: Path) -> None:
     source = tmp_path / "transactions.csv"
     source.write_text("placeholder", encoding="utf-8")
+    companion = tmp_path / "raw-transactions.csv"
+    companion.write_text("placeholder", encoding="utf-8")
     environ = {
         **VALID_ENV,
         "TRAINING_MODE": "train",
         "TRAINING_DATA_URI": str(source),
+        "TRAINING_TRANSACTIONS_URI": str(companion),
+        "TRAINING_SPLIT_DATETIME": "2026-05-01 00:00:00",
         "MLFLOW_REGISTERED_MODEL_NAME": "fdshield-fraud-detector",
         "MLFLOW_AUTO_PROMOTE": "true",
     }
@@ -243,11 +267,14 @@ def test_training_job_main_trains_registers_and_promotes_model(tmp_path: Path) -
         data_path: str | Path,
         experiment_name: str,
         config: ProductionTrainingConfig,
+        transactions_path: str | Path | None,
     ) -> ProductionTrainingResult:
         assert Path(data_path) == source
+        assert Path(transactions_path) == companion
         assert experiment_name == "fdshield-binary-training"
         assert config.registered_model_name == "fdshield-fraud-detector"
         assert config.auto_promote is True
+        assert config.split_datetime == "2026-05-01 00:00:00"
         return ProductionTrainingResult(
             run_id="run-123",
             model_version=17,
