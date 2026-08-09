@@ -67,8 +67,13 @@ def _install_fake_mlflow(
     )
 
     class FakeClient:
+        def get_model_version_by_alias(self, *args: object) -> object:
+            error = RuntimeError("alias not found")
+            error.error_code = "RESOURCE_DOES_NOT_EXIST"  # type: ignore[attr-defined]
+            raise error
+
         def set_model_version_tag(self, *args: object) -> None:
-            calls["tag"] = args
+            calls.setdefault("tags", []).append(args)
 
         def set_registered_model_alias(self, *args: object) -> None:
             calls["alias"] = args
@@ -85,7 +90,7 @@ def test_production_training_config_rejects_invalid_gate() -> None:
         )
 
 
-def test_train_registers_version_and_promotes_passing_model(
+def test_train_registers_candidate_without_automatic_promotion(
     tmp_path: Path,
     raw_features_factory: RawFeaturesFactory,
     monkeypatch: pytest.MonkeyPatch,
@@ -100,7 +105,6 @@ def test_train_registers_version_and_promotes_passing_model(
         "fdshield-binary-training",
         production.ProductionTrainingConfig(
             registered_model_name="fdshield-fraud-detector",
-            auto_promote=True,
             minimum_pr_auc=0.0,
             minimum_recall=0.0,
             minimum_fraud_rows_per_split=1,
@@ -114,20 +118,56 @@ def test_train_registers_version_and_promotes_passing_model(
     assert result.run_id == "run-123"
     assert result.model_version == 17
     assert result.validation_passed is True
-    assert result.promoted is True
-    assert calls["tag"] == (
-        "fdshield-fraud-detector",
-        "17",
-        "validation_status",
-        "passed",
-    )
-    assert calls["alias"] == (
-        "fdshield-fraud-detector",
-        "champion",
-        "17",
-    )
+    assert result.promoted is False
+    assert result.recommendation == "REVIEW_REQUIRED"
+    assert calls["tags"] == [
+        ("fdshield-fraud-detector", "17", "validation_status", "passed"),
+        (
+            "fdshield-fraud-detector",
+            "17",
+            "promotion_recommendation",
+            "REVIEW_REQUIRED",
+        ),
+    ]
+    assert "alias" not in calls
     assert calls["params"]["training_data_contract"] == "raw"
     assert calls["params"]["split_strategy"] == "time"
+
+
+def test_recommendation_requires_relative_improvement_without_guardrail_regression() -> None:
+    champion = {
+        "validation_pr_auc": 0.90,
+        "validation_recall": 0.85,
+        "validation_fpr": 0.01,
+    }
+
+    assert production._promotion_recommendation(
+        {
+            "validation_pr_auc": 0.91,
+            "validation_recall": 0.86,
+            "validation_fpr": 0.009,
+        },
+        champion,
+        validation_passed=True,
+    ) == "RECOMMENDED"
+    assert production._promotion_recommendation(
+        {
+            "validation_pr_auc": 0.91,
+            "validation_recall": 0.80,
+            "validation_fpr": 0.009,
+        },
+        champion,
+        validation_passed=True,
+    ) == "REVIEW_REQUIRED"
+    assert production._promotion_recommendation(
+        {
+            "validation_pr_auc": 0.89,
+            "validation_recall": 0.90,
+            "validation_fpr": 0.009,
+        },
+        champion,
+        validation_passed=True,
+    ) == "NOT_RECOMMENDED"
 
 
 def test_train_accepts_exact_preprocessed_contract_with_time_split(

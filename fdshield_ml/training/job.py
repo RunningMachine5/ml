@@ -16,6 +16,8 @@ import os
 from pathlib import Path
 import sys
 from typing import TextIO
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from fdshield_ml.training.data_loader import (
     TrainingDataError,
@@ -48,6 +50,11 @@ ProductionTrainingRunner = Callable[
     [str | Path, str, ProductionTrainingConfig, str | Path | None],
     ProductionTrainingResult,
 ]
+TrainingResultNotifier = Callable[["TrainingJobConfig", dict[str, object]], None]
+
+
+class TrainingResultNotificationError(RuntimeError):
+    """Backend에 학습 결과를 기록하지 못했을 때 발생한다."""
 
 
 @dataclass(frozen=True)
@@ -65,6 +72,10 @@ class TrainingJobConfig:
     auto_promote: bool = False
     minimum_pr_auc: float = 0.0
     minimum_recall: float = 0.0
+    backend_training_run_id: int | None = None
+    result_callback_url: str = ""
+    result_callback_token: str = ""
+    champion_model_version: int | None = None
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str]) -> "TrainingJobConfig":
@@ -132,17 +143,56 @@ class TrainingJobConfig:
         auto_promote_value = environ.get("MLFLOW_AUTO_PROMOTE", "false").strip().lower()
         if auto_promote_value not in {"true", "false"}:
             raise ValueError("MLFLOW_AUTO_PROMOTE must be true or false")
+        if auto_promote_value == "true":
+            raise ValueError(
+                "MLFLOW_AUTO_PROMOTE must be false; an administrator approves candidates"
+            )
         try:
             minimum_pr_auc = float(environ.get("MODEL_MIN_PR_AUC", "0"))
             minimum_recall = float(environ.get("MODEL_MIN_RECALL", "0"))
         except ValueError as exc:
             raise ValueError("MODEL_MIN_PR_AUC and MODEL_MIN_RECALL must be numbers") from exc
 
+        backend_training_run_id_value = environ.get(
+            "BACKEND_TRAINING_RUN_ID", ""
+        ).strip()
+        callback_url = environ.get("TRAINING_RESULT_CALLBACK_URL", "").strip()
+        callback_token = environ.get("TRAINING_RESULT_CALLBACK_TOKEN", "").strip()
+        champion_model_version_value = environ.get(
+            "CHAMPION_MODEL_VERSION", ""
+        ).strip()
+        if backend_training_run_id_value:
+            try:
+                backend_training_run_id = int(backend_training_run_id_value)
+            except ValueError as exc:
+                raise ValueError("BACKEND_TRAINING_RUN_ID must be an integer") from exc
+            if backend_training_run_id < 1:
+                raise ValueError("BACKEND_TRAINING_RUN_ID must be positive")
+            if not callback_url or not callback_token:
+                raise ValueError(
+                    "TRAINING_RESULT_CALLBACK_URL and TOKEN are required with BACKEND_TRAINING_RUN_ID"
+                )
+        else:
+            backend_training_run_id = None
+        if champion_model_version_value:
+            try:
+                champion_model_version = int(champion_model_version_value)
+            except ValueError as exc:
+                raise ValueError("CHAMPION_MODEL_VERSION must be an integer") from exc
+            if champion_model_version < 1:
+                raise ValueError("CHAMPION_MODEL_VERSION must be positive")
+        else:
+            champion_model_version = None
+
         return cls(
             **values,
             auto_promote=auto_promote_value == "true",
             minimum_pr_auc=minimum_pr_auc,
             minimum_recall=minimum_recall,
+            backend_training_run_id=backend_training_run_id,
+            result_callback_url=callback_url,
+            result_callback_token=callback_token,
+            champion_model_version=champion_model_version,
         )
 
     def production_config(self) -> ProductionTrainingConfig:
@@ -153,6 +203,7 @@ class TrainingJobConfig:
             minimum_pr_auc=self.minimum_pr_auc,
             minimum_recall=self.minimum_recall,
             split_datetime=self.split_datetime,
+            champion_model_version=self.champion_model_version,
         )
 
 
@@ -166,10 +217,50 @@ def _write_event(stream: TextIO, event: str, **fields: object) -> None:
     )
 
 
+def _config_log_fields(config: TrainingJobConfig) -> dict[str, object]:
+    """구조화 로그에서 Backend 관리 토큰을 제외한다."""
+
+    fields = asdict(config)
+    fields.pop("result_callback_token", None)
+    return fields
+
+
+def notify_training_result(
+    config: TrainingJobConfig,
+    payload: dict[str, object],
+) -> None:
+    """설정된 경우 Backend 학습 이력에 성공·실패 결과를 기록한다."""
+
+    if config.backend_training_run_id is None:
+        return
+    url = config.result_callback_url.format(
+        training_run_id=config.backend_training_run_id
+    )
+    request = Request(
+        url,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "X-MLOps-Admin-Token": config.result_callback_token,
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=20) as response:
+            if response.status < 200 or response.status >= 300:
+                raise TrainingResultNotificationError(
+                    f"Backend callback returned HTTP {response.status}."
+                )
+    except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        raise TrainingResultNotificationError(
+            "Failed to record the training result in Backend."
+        ) from exc
+
+
 def run_stub(config: TrainingJobConfig, stream: TextIO = sys.stdout) -> None:
     """인프라 실행 흐름만 확인하고 실제 모델 학습은 수행하지 않는다."""
 
-    _write_event(stream, "training_job_started", **asdict(config))
+    _write_event(stream, "training_job_started", **_config_log_fields(config))
     _write_event(
         stream,
         "training_job_completed",
@@ -191,7 +282,7 @@ def run_data_validation(
     _write_event(
         stream,
         "training_job_started",
-        **asdict(config),
+        **_config_log_fields(config),
         source_type=source_type,
     )
 
@@ -242,6 +333,7 @@ def run_model_training(
     stream: TextIO = sys.stdout,
     materializer: TrainingDataMaterializer = materialize_training_data,
     training_runner: ProductionTrainingRunner = train_and_register_model,
+    result_notifier: TrainingResultNotifier = notify_training_result,
 ) -> None:
     """학습 데이터를 내려받아 실제 모델을 학습·등록하고 결과를 기록한다."""
 
@@ -249,7 +341,7 @@ def run_model_training(
     _write_event(
         stream,
         "training_job_started",
-        **asdict(config),
+        **_config_log_fields(config),
         source_type=source_type,
     )
 
@@ -275,6 +367,33 @@ def run_model_training(
         validation_passed=result.validation_passed,
         promoted=result.promoted,
         metrics=result.metrics,
+        recommendation=result.recommendation,
+        champion_model_version=result.champion_model_version,
+        champion_metrics=result.champion_metrics,
+    )
+    result_notifier(
+        config,
+        {
+            "status": "SUCCEEDED",
+            "mlflow_run_id": result.run_id,
+            "model_version": str(result.model_version),
+            "comparison_result": {
+                "candidate": {
+                    "model_version": str(result.model_version),
+                    "metrics": result.metrics,
+                },
+                "production": (
+                    {
+                        "model_version": str(result.champion_model_version),
+                        "metrics": result.champion_metrics,
+                    }
+                    if result.champion_model_version is not None
+                    and result.champion_metrics is not None
+                    else None
+                ),
+                "recommendation": result.recommendation,
+            },
+        },
     )
     _write_event(
         stream,
@@ -293,9 +412,11 @@ def main(
     materializer: TrainingDataMaterializer = materialize_training_data,
     validation_run_logger: ValidationRunLogger = log_data_validation_run,
     training_runner: ProductionTrainingRunner = train_and_register_model,
+    result_notifier: TrainingResultNotifier = notify_training_result,
 ) -> int:
     """환경변수를 검증하고 성공 여부를 프로세스 종료 코드로 반환한다."""
 
+    config: TrainingJobConfig | None = None
     try:
         config = TrainingJobConfig.from_env(os.environ if environ is None else environ)
         if config.mode == "train":
@@ -304,6 +425,7 @@ def main(
                 stdout,
                 materializer,
                 training_runner,
+                result_notifier,
             )
         elif data_source_type(config.data_uri) == "stub":
             run_stub(config, stdout)
@@ -314,10 +436,25 @@ def main(
                 materializer,
                 validation_run_logger,
             )
+    except TrainingResultNotificationError as error:
+        _write_event(stderr, "training_result_notification_error", message=str(error))
+        return 6
     except TrainingTrackingError as error:
         _write_event(stderr, "training_tracking_error", message=str(error))
         return 4
     except ProductionTrainingError as error:
+        if config is not None:
+            try:
+                result_notifier(
+                    config,
+                    {"status": "FAILED", "error_message": str(error)},
+                )
+            except TrainingResultNotificationError as callback_error:
+                _write_event(
+                    stderr,
+                    "training_result_notification_error",
+                    message=str(callback_error),
+                )
         _write_event(stderr, "production_training_error", message=str(error))
         return 5
     except TrainingDataError as error:
