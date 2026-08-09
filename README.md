@@ -741,9 +741,10 @@ ML팀 생성형 원본 `transactions.csv` 하나를 사용합니다. 알려진 �
 직접 재현 검증할 때만 행 순서가 같은 원본 `transactions.csv`를
 `TRAINING_TRANSACTIONS_URI`로 함께 지정합니다. Cloud Run에서는 GCS 객체를 컨테이너의
 임시 디렉터리로 내려받습니다. `TRAINING_MODE=train`이면 XGBoost를 학습하고
-지표를 기록한 뒤 MLflow Model Registry에 새 버전을 등록합니다. PR-AUC와 Recall
-기준을 모두 통과하고 `MLFLOW_AUTO_PROMOTE=true`인 경우에만 지정한 alias를 새
-버전으로 이동합니다. `TRAINING_MODE=validate`는 데이터 검증 Run만 남깁니다.
+지표를 기록한 뒤 MLflow Model Registry에 새 후보 버전을 등록합니다. 현재 champion도
+같은 검증 행에서 다시 평가해 `RECOMMENDED`, `REVIEW_REQUIRED`, `NOT_RECOMMENDED`
+중 하나를 기록하지만 alias는 자동으로 이동하지 않습니다. 최종 승격은 Backend 관리
+API에서 관리자가 승인합니다. `TRAINING_MODE=validate`는 데이터 검증 Run만 남깁니다.
 
 ```text
 로컬 실행     TRAINING_DATA_URI=data/open/generated/transactions.csv
@@ -801,10 +802,14 @@ docker run --rm `
 | `MLFLOW_EXPERIMENT_NAME` | `fdshield-binary-training` | `fdshield-binary-training` | 검증 Run을 기록할 MLflow Experiment |
 | `TRAINING_MODE` | `train` | API override | `validate` 또는 실제 `train` |
 | `MLFLOW_REGISTERED_MODEL_NAME` | `fdshield-fraud-detector` | API override | Registry 모델 이름 |
-| `MLFLOW_MODEL_ALIAS` | `champion` | API override | 기준 통과 시 이동할 alias |
-| `MLFLOW_AUTO_PROMOTE` | `true` | API override | 지표 기준 통과 버전의 alias 자동 승격 |
-| `MODEL_MIN_PR_AUC` | `0.0` | API override | 승격 최소 PR-AUC |
-| `MODEL_MIN_RECALL` | `0.0` | API override | 승격 최소 Recall |
+| `MLFLOW_MODEL_ALIAS` | `champion` | API override | 상대 비교할 현재 운영 alias |
+| `MLFLOW_AUTO_PROMOTE` | `false` | API override | 관리자 승인 정책상 `false`만 허용 |
+| `MODEL_MIN_PR_AUC` | `0.0` | API override | 후보 유효성 최소 PR-AUC |
+| `MODEL_MIN_RECALL` | `0.0` | API override | 후보 유효성 최소 Recall |
+| `BACKEND_TRAINING_RUN_ID` | 없음 | API override | Backend `training_runs.id` |
+| `CHAMPION_MODEL_VERSION` | 없음 | API override | Backend가 현재 운영 중이라고 기록한 정확한 비교 모델 버전 |
+| `TRAINING_RESULT_CALLBACK_URL` | 없음 | Job 설정 | Backend 결과 callback URL 템플릿 |
+| `TRAINING_RESULT_CALLBACK_TOKEN` | 없음 | Secret | callback 관리자 토큰 |
 
 `stub://...` 값도 기존 인프라 실행 확인용으로 계속 지원하며 이 경우 MLflow Run은
 만들지 않습니다. `train` 모드는 Registry 버전과 검증 태그를 만들며 실행 로그의

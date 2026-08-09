@@ -14,6 +14,7 @@ from mlflow.tracking import MlflowClient
 from sklearn.metrics import (
     average_precision_score,
     f1_score,
+    confusion_matrix,
     precision_score,
     recall_score,
     roc_auc_score,
@@ -55,6 +56,7 @@ class ProductionTrainingConfig:
     auto_promote: bool = False
     minimum_pr_auc: float = 0.0
     minimum_recall: float = 0.0
+    champion_model_version: int | None = None
     random_state: int = 42
     split_datetime: datetime | str = DEFAULT_SPLIT_DATETIME
     minimum_fraud_rows_per_split: int = DEFAULT_MIN_FRAUD_ROWS_PER_SPLIT
@@ -74,9 +76,15 @@ class ProductionTrainingConfig:
             raise ValueError("registered_model_name is required")
         if not self.model_alias.strip():
             raise ValueError("model_alias is required")
+        if self.auto_promote:
+            raise ValueError(
+                "auto_promote is disabled; an administrator must approve a candidate"
+            )
         for name in ("minimum_pr_auc", "minimum_recall"):
             if not 0 <= getattr(self, name) <= 1:
                 raise ValueError(f"{name} must be between 0 and 1")
+        if self.champion_model_version is not None and self.champion_model_version < 1:
+            raise ValueError("champion_model_version must be positive")
         if self.minimum_fraud_rows_per_split < 1:
             raise ValueError("minimum_fraud_rows_per_split must be positive")
         try:
@@ -104,6 +112,9 @@ class ProductionTrainingResult:
     metrics: dict[str, float]
     validation_passed: bool
     promoted: bool
+    recommendation: str
+    champion_model_version: int | None
+    champion_metrics: dict[str, float] | None
 
 
 def _read_companion_transactions(data_path: str | Path) -> pd.DataFrame:
@@ -136,6 +147,8 @@ def _evaluation_metrics(
     probability: pd.Series,
 ) -> dict[str, float]:
     predicted = probability.ge(0.5).astype("int8")
+    tn, fp, _, _ = confusion_matrix(target, predicted, labels=[0, 1]).ravel()
+    false_positive_rate = fp / (fp + tn) if fp + tn else 0.0
     return {
         "validation_pr_auc": float(average_precision_score(target, probability)),
         "validation_roc_auc": float(roc_auc_score(target, probability)),
@@ -144,7 +157,69 @@ def _evaluation_metrics(
             precision_score(target, predicted, zero_division=0)
         ),
         "validation_f1": float(f1_score(target, predicted, zero_division=0)),
+        "validation_fpr": float(false_positive_rate),
+        "decision_threshold": 0.5,
     }
+
+
+def _champion_evaluation(
+    client: MlflowClient,
+    config: ProductionTrainingConfig,
+    features: pd.DataFrame,
+    target: pd.Series,
+) -> tuple[int | None, dict[str, float] | None]:
+    """현재 champion을 후보와 동일한 검증 행에서 다시 평가한다."""
+
+    if config.champion_model_version is not None:
+        champion_version = config.champion_model_version
+    else:
+        try:
+            version = client.get_model_version_by_alias(
+                config.registered_model_name,
+                config.model_alias,
+            )
+            champion_version = int(version.version)
+        except Exception as exc:
+            if getattr(exc, "error_code", "") == "RESOURCE_DOES_NOT_EXIST":
+                return None, None
+            raise ProductionTrainingError("Failed to resolve the current champion model.") from exc
+
+    try:
+        champion = mlflow.sklearn.load_model(
+            f"models:/{config.registered_model_name}/{champion_version}"
+        )
+        probability = pd.Series(
+            champion.predict_proba(features)[:, 1],
+            index=target.index,
+        )
+    except Exception as exc:
+        raise ProductionTrainingError(
+            "Failed to evaluate the current champion model."
+        ) from exc
+    return champion_version, _evaluation_metrics(target, probability)
+
+
+def _promotion_recommendation(
+    candidate: dict[str, float],
+    champion: dict[str, float] | None,
+    *,
+    validation_passed: bool,
+) -> str:
+    """자동 배포가 아닌 관리자 검토용 상대 비교 결과를 만든다."""
+
+    if not validation_passed:
+        return "NOT_RECOMMENDED"
+    if champion is None:
+        return "REVIEW_REQUIRED"
+    if (
+        candidate["validation_pr_auc"] > champion["validation_pr_auc"]
+        and candidate["validation_recall"] >= champion["validation_recall"]
+        and candidate["validation_fpr"] <= champion["validation_fpr"]
+    ):
+        return "RECOMMENDED"
+    if candidate["validation_pr_auc"] > champion["validation_pr_auc"]:
+        return "REVIEW_REQUIRED"
+    return "NOT_RECOMMENDED"
 
 
 def train_and_register_model(
@@ -252,6 +327,18 @@ def train_and_register_model(
         metrics["validation_pr_auc"] >= config.minimum_pr_auc
         and metrics["validation_recall"] >= config.minimum_recall
     )
+    client = MlflowClient()
+    champion_model_version, champion_metrics = _champion_evaluation(
+        client,
+        config,
+        X_validation,
+        y_validation,
+    )
+    recommendation = _promotion_recommendation(
+        metrics,
+        champion_metrics,
+        validation_passed=validation_passed,
+    )
 
     mlflow.set_experiment(experiment_name)
     with mlflow.start_run(run_name="cloud-run-production-training") as run:
@@ -278,6 +365,7 @@ def train_and_register_model(
                 "random_state": config.random_state,
                 "minimum_pr_auc": config.minimum_pr_auc,
                 "minimum_recall": config.minimum_recall,
+                "decision_threshold": 0.5,
                 **split_metadata,
             }
         )
@@ -288,7 +376,18 @@ def train_and_register_model(
                 "task": "binary_fraud_detection",
                 "pipeline_stage": "production_training",
                 "validation_status": "passed" if validation_passed else "failed",
+                "promotion_recommendation": recommendation,
+                "champion_model_version": str(champion_model_version or ""),
             }
+        )
+        mlflow.log_dict(
+            {
+                "candidate": metrics,
+                "champion_model_version": champion_model_version,
+                "champion": champion_metrics,
+                "recommendation": recommendation,
+            },
+            "metadata/model-comparison.json",
         )
         mlflow.log_dict(
             {"model_feature_columns": list(MODEL_FEATURE_COLUMNS)},
@@ -311,20 +410,19 @@ def train_and_register_model(
     if model_version is None:
         raise ProductionTrainingError("MLflow did not return a registered model version.")
 
-    client = MlflowClient()
     client.set_model_version_tag(
         config.registered_model_name,
         str(model_version),
         "validation_status",
         "passed" if validation_passed else "failed",
     )
-    promoted = validation_passed and config.auto_promote
-    if promoted:
-        client.set_registered_model_alias(
-            config.registered_model_name,
-            config.model_alias,
-            str(model_version),
-        )
+    client.set_model_version_tag(
+        config.registered_model_name,
+        str(model_version),
+        "promotion_recommendation",
+        recommendation,
+    )
+    promoted = False
 
     return ProductionTrainingResult(
         run_id=run_id,
@@ -332,4 +430,7 @@ def train_and_register_model(
         metrics=metrics,
         validation_passed=validation_passed,
         promoted=promoted,
+        recommendation=recommendation,
+        champion_model_version=champion_model_version,
+        champion_metrics=champion_metrics,
     )

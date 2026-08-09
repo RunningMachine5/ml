@@ -107,14 +107,14 @@ def test_training_job_config_requires_registered_model_in_train_mode() -> None:
         TrainingJobConfig.from_env(environ)
 
 
-def test_training_job_config_builds_production_gate() -> None:
+def test_training_job_config_builds_manual_approval_gate() -> None:
     environ = {
         **VALID_ENV,
         "TRAINING_MODE": "train",
         "TRAINING_DATA_URI": "data/train.csv",
         "MLFLOW_REGISTERED_MODEL_NAME": "fdshield-fraud-detector",
         "MLFLOW_MODEL_ALIAS": "champion",
-        "MLFLOW_AUTO_PROMOTE": "true",
+        "MLFLOW_AUTO_PROMOTE": "false",
         "MODEL_MIN_PR_AUC": "0.75",
         "MODEL_MIN_RECALL": "0.8",
     }
@@ -124,10 +124,40 @@ def test_training_job_config_builds_production_gate() -> None:
     assert config.production_config() == ProductionTrainingConfig(
         registered_model_name="fdshield-fraud-detector",
         model_alias="champion",
-        auto_promote=True,
+        auto_promote=False,
         minimum_pr_auc=0.75,
         minimum_recall=0.8,
     )
+
+
+def test_training_job_config_rejects_automatic_promotion() -> None:
+    environ = {
+        **VALID_ENV,
+        "TRAINING_MODE": "train",
+        "TRAINING_DATA_URI": "data/train.csv",
+        "MLFLOW_REGISTERED_MODEL_NAME": "fdshield-fraud-detector",
+        "MLFLOW_AUTO_PROMOTE": "true",
+    }
+
+    with pytest.raises(ValueError, match="administrator approves"):
+        TrainingJobConfig.from_env(environ)
+
+
+def test_training_job_log_does_not_expose_callback_token() -> None:
+    stdout = io.StringIO()
+    environ = {
+        **VALID_ENV,
+        "BACKEND_TRAINING_RUN_ID": "7",
+        "TRAINING_RESULT_CALLBACK_URL": (
+            "https://api.example/mlops/training/runs/{training_run_id}/result"
+        ),
+        "TRAINING_RESULT_CALLBACK_TOKEN": "do-not-log-this-token",
+    }
+
+    exit_code = main(environ, stdout=stdout)
+
+    assert exit_code == 0
+    assert "do-not-log-this-token" not in stdout.getvalue()
 
 
 def test_training_job_main_emits_structured_events_and_succeeds() -> None:
@@ -246,7 +276,7 @@ def test_training_job_main_reports_tracking_error(tmp_path: Path) -> None:
     assert "MLflow is unavailable" in error["message"]
 
 
-def test_training_job_main_trains_registers_and_promotes_model(tmp_path: Path) -> None:
+def test_training_job_main_registers_candidate_without_promotion(tmp_path: Path) -> None:
     source = tmp_path / "transactions.csv"
     source.write_text("placeholder", encoding="utf-8")
     companion = tmp_path / "raw-transactions.csv"
@@ -258,7 +288,12 @@ def test_training_job_main_trains_registers_and_promotes_model(tmp_path: Path) -
         "TRAINING_TRANSACTIONS_URI": str(companion),
         "TRAINING_SPLIT_DATETIME": "2026-05-01 00:00:00",
         "MLFLOW_REGISTERED_MODEL_NAME": "fdshield-fraud-detector",
-        "MLFLOW_AUTO_PROMOTE": "true",
+        "MLFLOW_AUTO_PROMOTE": "false",
+        "BACKEND_TRAINING_RUN_ID": "7",
+        "TRAINING_RESULT_CALLBACK_URL": (
+            "https://api.example/mlops/training/runs/{training_run_id}/result"
+        ),
+        "TRAINING_RESULT_CALLBACK_TOKEN": "callback-secret",
     }
     stdout = io.StringIO()
     stderr = io.StringIO()
@@ -273,21 +308,38 @@ def test_training_job_main_trains_registers_and_promotes_model(tmp_path: Path) -
         assert Path(transactions_path) == companion
         assert experiment_name == "fdshield-binary-training"
         assert config.registered_model_name == "fdshield-fraud-detector"
-        assert config.auto_promote is True
+        assert config.auto_promote is False
         assert config.split_datetime == "2026-05-01 00:00:00"
         return ProductionTrainingResult(
             run_id="run-123",
             model_version=17,
             metrics={"validation_pr_auc": 0.9, "validation_recall": 0.85},
             validation_passed=True,
-            promoted=True,
+            promoted=False,
+            recommendation="RECOMMENDED",
+            champion_model_version=1,
+            champion_metrics={
+                "validation_pr_auc": 0.8,
+                "validation_recall": 0.8,
+                "validation_fpr": 0.01,
+            },
         )
+
+    notifications: list[dict[str, object]] = []
+
+    def capture_result(
+        config: TrainingJobConfig,
+        payload: dict[str, object],
+    ) -> None:
+        assert config.backend_training_run_id == 7
+        notifications.append(payload)
 
     exit_code = main(
         environ,
         stdout=stdout,
         stderr=stderr,
         training_runner=successful_training_runner,
+        result_notifier=capture_result,
     )
     events = [json.loads(line) for line in stdout.getvalue().splitlines()]
 
@@ -299,4 +351,11 @@ def test_training_job_main_trains_registers_and_promotes_model(tmp_path: Path) -
         "training_job_completed",
     ]
     assert events[1]["model_version"] == 17
-    assert events[1]["promoted"] is True
+    assert events[1]["promoted"] is False
+    assert events[1]["recommendation"] == "RECOMMENDED"
+    assert notifications[0]["status"] == "SUCCEEDED"
+    assert notifications[0]["model_version"] == "17"
+    comparison = notifications[0]["comparison_result"]
+    assert comparison["candidate"]["model_version"] == "17"
+    assert comparison["production"]["model_version"] == "1"
+    assert comparison["recommendation"] == "RECOMMENDED"
