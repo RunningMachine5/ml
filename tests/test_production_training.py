@@ -5,12 +5,12 @@ from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pandas as pd
 import pytest
 
 from fdshield_ml.common.preprocessing import preprocess_frame
 from fdshield_ml.training import production
-
 
 RawFeaturesFactory = Callable[..., dict[str, object]]
 
@@ -60,11 +60,11 @@ def _install_fake_mlflow(
         yield SimpleNamespace(info=SimpleNamespace(run_id="run-123"))
 
     monkeypatch.setattr(production.mlflow, "start_run", fake_start_run)
-    monkeypatch.setattr(
-        production.mlflow.sklearn,
-        "log_model",
-        lambda **_: SimpleNamespace(registered_model_version=17),
-    )
+    def fake_log_model(**kwargs: object) -> object:
+        calls["model"] = kwargs["sk_model"]
+        return SimpleNamespace(registered_model_version=17)
+
+    monkeypatch.setattr(production.mlflow.sklearn, "log_model", fake_log_model)
 
     class FakeClient:
         def get_model_version_by_alias(self, *args: object) -> object:
@@ -120,7 +120,7 @@ def test_train_registers_candidate_without_automatic_promotion(
     assert result.validation_passed is True
     assert result.promoted is False
     assert result.recommendation == "REVIEW_REQUIRED"
-    assert calls["tags"] == [
+    assert calls["tags"][:2] == [
         ("fdshield-fraud-detector", "17", "validation_status", "passed"),
         (
             "fdshield-fraud-detector",
@@ -129,9 +129,53 @@ def test_train_registers_candidate_without_automatic_promotion(
             "REVIEW_REQUIRED",
         ),
     ]
+    assert calls["tags"][2] == (
+        "fdshield-fraud-detector",
+        "17",
+        "decision_threshold",
+        repr(result.metrics["decision_threshold"]),
+    )
     assert "alias" not in calls
     assert calls["params"]["training_data_contract"] == "raw"
     assert calls["params"]["split_strategy"] == "time"
+    assert calls["params"]["decision_threshold"] == result.metrics["decision_threshold"]
+    assert calls["model"].decision_threshold_ == result.metrics["decision_threshold"]
+
+
+def test_champion_evaluation_uses_registered_model_threshold_tag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class LegacyChampion:
+        def predict_proba(self, features: pd.DataFrame) -> object:
+            assert len(features) == 2
+            return np.asarray([[0.4, 0.6], [0.3, 0.7]])
+
+    class FakeClient:
+        def get_model_version(self, name: str, version: str) -> object:
+            assert name == "fdshield-fraud-detector"
+            assert version == "5"
+            return SimpleNamespace(tags={"decision_threshold": "0.65"})
+
+    monkeypatch.setattr(
+        production.mlflow.sklearn,
+        "load_model",
+        lambda _: LegacyChampion(),
+    )
+
+    version, metrics = production._champion_evaluation(
+        FakeClient(),  # type: ignore[arg-type]
+        production.ProductionTrainingConfig(
+            registered_model_name="fdshield-fraud-detector",
+            champion_model_version=5,
+        ),
+        pd.DataFrame({"feature": [0.0, 1.0]}),
+        pd.Series([0, 1]),
+    )
+
+    assert version == 5
+    assert metrics is not None
+    assert metrics["decision_threshold"] == pytest.approx(0.65)
+    assert metrics["validation_recall"] == pytest.approx(1.0)
 
 
 def test_recommendation_requires_relative_improvement_without_guardrail_regression() -> None:

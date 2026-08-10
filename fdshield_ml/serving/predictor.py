@@ -49,10 +49,9 @@ class StubPredictor:
 
     @classmethod
     def from_environment(cls) -> "StubPredictor":
-        """로컬과 Cloud Run에서 동일한 환경변수로 Stub 설정을 생성한다."""
+        """Stub 모델 메타데이터를 환경변수에서 읽고 판정 기준은 코드에 고정한다."""
 
         return cls(
-            threshold=float(os.getenv("ML_FRAUD_THRESHOLD", "0.55")),
             model_name=os.getenv(
                 "ML_MODEL_NAME",
                 "fdshield-rule-based-stub",

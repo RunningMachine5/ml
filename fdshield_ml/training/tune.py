@@ -18,12 +18,12 @@ import optuna
 import pandas as pd
 from mlflow.models import infer_signature
 
+from fdshield_ml.common.decision_threshold import store_model_decision_threshold
 from fdshield_ml.common.features import (
     FDShieldFeatureBuilder,
     feature_manifest,
     model_input_and_groups,
 )
-from fdshield_ml.training.tracking import configure_tracking, verify_connection
 from fdshield_ml.training.pipeline import (
     TrainingConfig,
     build_pipeline,
@@ -33,11 +33,11 @@ from fdshield_ml.training.pipeline import (
     model_parameters,
     stratified_sample,
 )
+from fdshield_ml.training.tracking import configure_tracking, verify_connection
 from fdshield_ml.training.tuning import (
     config_from_best_params,
     suggest_training_config,
 )
-
 
 MODEL_TYPES = (
     "logistic-regression",
@@ -327,6 +327,10 @@ def main() -> None:
 
         input_example = split.X_validation.head(5).copy()
         predicted_example = best_pipeline.predict_proba(input_example)
+        store_model_decision_threshold(
+            best_pipeline,
+            best_evaluation.metrics["decision_threshold"],
+        )
         signature = infer_signature(input_example, predicted_example)
         model_info = mlflow.sklearn.log_model(
             sk_model=best_pipeline,

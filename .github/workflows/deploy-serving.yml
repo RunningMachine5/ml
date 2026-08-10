@@ -276,6 +276,7 @@ jobs:
             --project="$GCP_PROJECT_ID" \
             --region="$GCP_REGION" \
             --image="$DEPLOY_DIGEST" \
+            --remove-env-vars="ML_FRAUD_THRESHOLD" \
             --update-env-vars="ML_PREDICTOR_MODE=$PREDICTOR_MODE,ML_MODEL_NAME=$MODEL_NAME,ML_MODEL_VERSION=$MODEL_VERSION" \
             --no-traffic \
             --tag="$revision_tag" \
@@ -371,6 +372,8 @@ jobs:
               for name, value in expected_environment.items()
           ):
               raise SystemExit("::error::New revision model configuration is incorrect")
+          if "ML_FRAUD_THRESHOLD" in environment:
+              raise SystemExit("::error::Legacy fraud threshold environment remains")
 
           print("Tagged revision uses the Cloud Build-smoked digest and exact model config.")
           PY

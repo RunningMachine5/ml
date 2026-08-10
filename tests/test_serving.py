@@ -1,10 +1,10 @@
 """모델 서빙 스켈레톤의 HTTP 계약 테스트."""
 
-from collections.abc import Callable
 import math
+from collections.abc import Callable
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 
 from fdshield_ml.common.feature_contract import (
     MODEL_FEATURE_COLUMNS,
@@ -12,7 +12,6 @@ from fdshield_ml.common.feature_contract import (
 )
 from fdshield_ml.serving.app import create_app
 from fdshield_ml.serving.predictor import StubPredictor
-
 
 RawFeaturesFactory = Callable[..., dict[str, object]]
 
@@ -152,7 +151,8 @@ def test_stub_predictor_reads_serving_environment(
     )
 
     assert response.status_code == 200
-    assert response.json()["is_fraud"] is False
+    # 제거된 과거 환경변수는 무시하고 Stub 자체 판정 기준을 사용한다.
+    assert response.json()["is_fraud"] is True
     assert response.json()["model_name"] == "demo-model"
     assert response.json()["model_version"] == "3"
 
