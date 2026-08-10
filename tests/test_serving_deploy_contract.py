@@ -52,3 +52,21 @@ def test_training_deploy_removes_legacy_promotion_environment() -> None:
 
     assert '--remove-env-vars="MLFLOW_AUTO_PROMOTE"' in workflow
     assert "Legacy automatic promotion environment is absent." in workflow
+
+
+def test_bundled_model_is_in_serving_image_and_ci_paths() -> None:
+    dockerfile = (ROOT / "Dockerfile.serving").read_text(encoding="utf-8")
+    compose = (ROOT / "compose.serving.yml").read_text(encoding="utf-8")
+    ci_workflow = (
+        ROOT / ".github" / "workflows" / "ci-serving.yml"
+    ).read_text(encoding="utf-8")
+    deploy_workflow = (
+        ROOT / ".github" / "workflows" / "deploy-serving.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "COPY --chown=appuser:appuser models ./models" in dockerfile
+    assert "ML_PREDICTOR_MODE: ${ML_PREDICTOR_MODE:-local}" in compose
+    assert "fdshield-rule-based-stub" not in compose
+    assert '"models/**"' in ci_workflow
+    assert '"models/**"' in deploy_workflow
+    assert "Verify bundled model readiness" in ci_workflow

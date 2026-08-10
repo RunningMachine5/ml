@@ -1,0 +1,15 @@
+{
+  "bundle_schema_version": 1,
+  "model_name": "fdshield-fraud-detector",
+  "model_version": "5",
+  "model_format": "xgboost-ubj",
+  "model_file": "model.ubj",
+  "model_sha256": "3112f4acebfeaffc1c85b0ba94c0f633fe6cbd9eb691f83a90280aa0bc9208d8",
+  "feature_count": 91,
+  "decision_threshold": 0.55,
+  "decision_threshold_source": "legacy_cloud_run_config",
+  "source_model_id": "m-59bf3a9bec424b29aac30492fe371009",
+  "source_run_id": "c2e94234eefb4d18bcf989093cab3931",
+  "source_model_pickle_sha256": "5383e6e861a3edc9cfa3822a9cf7969eede5958f305dc67ea162aa8719f4f8e2",
+  "native_export_probability_max_abs_diff": 0.0
+}

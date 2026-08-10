@@ -2,7 +2,7 @@
 
 from fastapi import FastAPI, HTTPException, Request
 from fdshield_ml.common.preprocessing import FeaturePreprocessingError
-from fdshield_ml.serving.mlflow_predictor import ModelServingError
+from fdshield_ml.serving.model_predictor import ModelServingError
 from fdshield_ml.serving.predictor import Predictor, predictor_from_environment
 from fdshield_ml.serving.schemas import (
     HealthResponse,
