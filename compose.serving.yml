@@ -8,9 +8,10 @@ services:
     restart: unless-stopped
     environment:
       PORT: "8080"
-      ML_PREDICTOR_MODE: ${ML_PREDICTOR_MODE:-stub}
-      ML_MODEL_NAME: ${ML_MODEL_NAME:-fdshield-rule-based-stub}
-      ML_MODEL_VERSION: ${ML_MODEL_VERSION:-0}
+      ML_PREDICTOR_MODE: ${ML_PREDICTOR_MODE:-local}
+      ML_LOCAL_MODEL_PATH: ${ML_LOCAL_MODEL_PATH:-/app/models/fdshield-fraud-detector-v5}
+      ML_MODEL_NAME: ${ML_MODEL_NAME:-}
+      ML_MODEL_VERSION: ${ML_MODEL_VERSION:-}
       MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-}
       MLFLOW_TRACKING_USERNAME: ${MLFLOW_TRACKING_USERNAME:-}
       MLFLOW_TRACKING_PASSWORD: ${MLFLOW_TRACKING_PASSWORD:-}

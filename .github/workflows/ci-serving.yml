@@ -13,6 +13,8 @@ on:
       - "fdshield_ml/features.py"
       - "fdshield_ml/common/**"
       - "fdshield_ml/serving/**"
+      - "models/**"
+      - "examples/local-model-predict-request.json"
 
 permissions:
   contents: read
@@ -31,3 +33,27 @@ jobs:
 
       - name: Build ML Serving image
         run: docker build --file Dockerfile.serving --tag fdshield-ml-serving:ci .
+
+      - name: Verify bundled model readiness
+        run: |
+          docker run --detach --name fdshield-ml-serving-ci --publish 18081:8080 fdshield-ml-serving:ci
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:18081/ready; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [[ "${ready:-false}" != "true" ]]; then
+            docker logs fdshield-ml-serving-ci
+            exit 1
+          fi
+          curl --fail --silent --show-error \
+            --header "Content-Type: application/json" \
+            --data @examples/local-model-predict-request.json \
+            http://127.0.0.1:18081/predict \
+            | python -c 'import json, sys; result = json.load(sys.stdin); assert result["model_name"] == "fdshield-fraud-detector"; assert result["model_version"] == "5"; assert len(result["shap"]) == 91'
+
+      - name: Stop bundled model container
+        if: always()
+        run: docker rm --force fdshield-ml-serving-ci || true

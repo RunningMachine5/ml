@@ -23,6 +23,7 @@ COPY --chown=appuser:appuser \
     ./fdshield_ml/
 COPY --chown=appuser:appuser fdshield_ml/common ./fdshield_ml/common
 COPY --chown=appuser:appuser fdshield_ml/serving ./fdshield_ml/serving
+COPY --chown=appuser:appuser models ./models
 
 USER appuser
 

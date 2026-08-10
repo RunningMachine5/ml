@@ -644,8 +644,10 @@ uv run python -m fdshield_ml.training.train \
 | `fdshield_ml/common/features.py` | 라벨 변환, 식별자 제외, 시간 Feature 생성 |
 | `fdshield_ml/serving/main.py` | 로컬 Docker와 Cloud Run Service 실행 진입점 |
 | `fdshield_ml/serving/app.py` | Backend가 호출하는 FastAPI 추론 API |
-| `fdshield_ml/serving/predictor.py` | Stub/MLflow predictor 선택 |
-| `fdshield_ml/serving/mlflow_predictor.py` | Registry의 고정 버전 모델 로드와 실제 추론 |
+| `fdshield_ml/serving/predictor.py` | 로컬 번들/MLflow predictor 선택 |
+| `fdshield_ml/serving/local_predictor.py` | Git에 포함된 고정 v5 모델 검증과 로드 |
+| `fdshield_ml/serving/model_predictor.py` | 실제 모델 추론·확률 검증·XGBoost 기여도 공통 처리 |
+| `fdshield_ml/serving/mlflow_predictor.py` | Registry의 고정 버전 모델 로드 |
 | `fdshield_ml/training/job.py` | Cloud Run Training Job 실행 진입점 |
 | `fdshield_ml/training/production.py` | 공통 전처리 기반 XGBoost 학습·Registry 등록·승격 |
 | `fdshield_ml/training/tracking.py` | MLflow 주소와 인증 설정 및 연결 확인 |
@@ -655,7 +657,8 @@ uv run python -m fdshield_ml.training.train \
 | `fdshield_ml/training/tune.py` | Optuna Study 실행, Trial 및 Best 모델 MLflow 기록 |
 | `tests/test_training.py` | 가짜 데이터로 전체 학습 흐름 검증 |
 | `tests/test_tuning.py` | 모델별 탐색 범위와 Best 설정 복원 검증 |
-| `tests/test_serving.py` | 상태 확인, 요청 검증, Stub 추론 계약 검증 |
+| `tests/test_serving.py` | 상태 확인과 HTTP 요청 계약 검증 |
+| `tests/test_local_predictor.py` | Git 포함 v5 모델 로딩·해시·실제 추론 검증 |
 
 코드를 수정했다면 테스트를 실행합니다.
 
@@ -674,18 +677,16 @@ Python을 생성하지 않습니다.
 
 ## ML Serving 실행
 
-Serving은 로컬 계약 확인용 `stub`과 MLflow Registry 모델을 사용하는 `mlflow` 모드를
-지원합니다. 두 모드 모두 Backend로부터 원본 Feature 54개를 받아 공통 전처리로 고정된
-91개 수치 Feature를 만듭니다. 정답 라벨과 식별정보는 받지 않습니다.
+Serving은 Git에 포함된 운영 v5 모델을 사용하는 `local` 모드와 MLflow Registry의 정확한
+버전을 사용하는 `mlflow` 모드를 지원합니다. 사용자 실행용 Stub 모드는 없습니다. 두
+모드 모두 Backend로부터 원본 Feature 54개를 받아 공통 전처리로 고정된 91개 수치
+Feature를 만들고 실제 XGBoost 확률과 contribution을 반환합니다. 정답 라벨과
+식별정보는 받지 않습니다.
 
-`stub` 모드는 거래금액, 잔액·한도 대비 비율, 최근 거래 이력, 접속 실패, VPN·단말·계좌
-상태, 거래 시각, 이동 거리와 이전 거래 간격 등 여러 위험 신호를 결정적으로 조합합니다.
-응답의 `shap`에는 실제 SHAP 대신 확률 계산에 사용한 log-odds 기여도를 91개 모델
-Feature에 맞춘 재현 가능한 소수점 더미 값으로 담습니다. 직접 위험 계산에 사용된
-Feature에는 큰 기여도를, 나머지 Feature에는 합계가 0인 작은 양·음수 배경 기여도를
-채우므로 로컬 화면·API 연동에서 실제 응답과 비슷한 밀도의 설명값까지 확인할 수
-있습니다. 모델 품질 평가나 운영 판단에는 `mlflow` 모드의 실제 모델과 설명값을
-사용해야 합니다.
+`local`은 `models/fdshield-fraud-detector-v5`의 native XGBoost 모델과 manifest를
+사용합니다. 시작할 때 모델 SHA-256, 버전, 판정 임계값, 91개 Feature 이름과 순서를
+검증합니다. 따라서 팀원은 MLflow 계정이나 원격 VM 없이 `git pull`과 Docker 실행만으로
+운영 모델과 같은 입력·출력 계약을 확인할 수 있습니다.
 
 ```json
 {
@@ -702,6 +703,7 @@ Feature에는 큰 기여도를, 나머지 Feature에는 합계가 0인 작은 �
 
 위 예시는 구조를 줄여 쓴 것이며 실제 요청의 `features`에는
 `fdshield_ml/common/feature_contract.py`에 정의한 54개 컬럼이 모두 필요합니다.
+전체 요청 예시는 `examples/local-model-predict-request.json`에 있습니다.
 
 ```console
 uv run uvicorn fdshield_ml.serving.app:app --host 0.0.0.0 --port 8001
@@ -714,31 +716,32 @@ uv run uvicorn fdshield_ml.serving.app:app --host 0.0.0.0 --port 8001
 
 | 환경변수 | 기본값 | 역할 |
 |---|---|---|
-| `ML_PREDICTOR_MODE` | `stub` | `stub` 또는 `mlflow` 선택 |
-| `ML_MODEL_NAME` | `fdshield-rule-based-stub` | Registry 모델 이름 및 응답 모델명 |
-| `ML_MODEL_VERSION` | `0` | 로컬 Stub 값. `mlflow` 운영 배포는 1 이상의 정확한 숫자 Registry 버전 필수 |
+| `ML_PREDICTOR_MODE` | `local` | `local` 또는 `mlflow` 선택 |
+| `ML_LOCAL_MODEL_PATH` | 코드 위치 기준 `models/fdshield-fraud-detector-v5` | `local` 모델 번들 경로 |
+| `ML_MODEL_NAME` | 없음 | `mlflow` 모드 Registry 모델 이름 |
+| `ML_MODEL_VERSION` | 없음 | `mlflow` 모드의 1 이상의 정확한 숫자 Registry 버전 |
 | `MLFLOW_TRACKING_URI` | 없음 | MLflow HTTPS 주소 (`mlflow` 모드 필수) |
 | `MLFLOW_TRACKING_USERNAME` | 없음 | MLflow Basic Auth 사용자 (`mlflow` 모드 필수) |
 | `MLFLOW_TRACKING_PASSWORD` | 없음 | MLflow Basic Auth 비밀번호 (`mlflow` 모드 필수) |
 
-`mlflow` 모드는 프로세스 시작 중 `models:/<name>/<version>`을 한 번 로드합니다. 모델
-로드에 실패하면 포트를 열지 않으므로 새 Cloud Run 리비전은 Ready가 되지 않고 기존
-리비전 트래픽은 그대로 유지됩니다. XGBoost 모델은 내장 contribution으로 설명값을
-반환하며 다른 `predict_proba` 모델은 빈 `shap`을 반환합니다.
+`local`과 `mlflow` 모두 프로세스 시작 중 모델을 한 번 로드합니다. 로드에 실패하면
+포트를 열지 않으므로 잘못된 번들이나 새 Cloud Run 리비전은 Ready가 되지 않습니다.
+XGBoost 모델은 내장 contribution으로 설명값을 반환하며 다른 `predict_proba` 모델은
+빈 `shap`을 반환합니다.
 
 사기 판정 임계값은 환경변수로 전달하지 않습니다. 학습 검증 단계에서 모델별 값을
 산출해 직렬화된 모델과 Registry 버전 태그에 함께 저장하며, 후보·champion 비교와
 Serving은 해당 모델 버전에 저장된 값을 사용합니다.
 
-Docker로 Stub 서버를 실행할 때는 다음 명령을 사용합니다.
+Docker로 Git에 포함된 v5 모델 서버를 실행할 때는 다음 명령을 사용합니다.
 
 ```console
 docker compose -f compose.serving.yml up --build
 ```
 
 컨테이너는 `http://localhost:8001`에서 요청을 받고, Cloud Run에서도 같은 이미지를
-사용할 수 있도록 내부 포트는 `PORT=8080`으로 실행됩니다. 실제 모델은
-`.env.serving.example`을 `.env.serving`으로 복사한 뒤 다음처럼 실행합니다.
+사용할 수 있도록 내부 포트는 `PORT=8080`으로 실행됩니다. 원격 MLflow Registry 버전을
+직접 확인할 때만 `.env.serving.example`을 `.env.serving`으로 복사해 다음처럼 실행합니다.
 
 ```console
 docker compose --env-file .env.serving -f compose.serving.yml up --build
@@ -901,8 +904,8 @@ Cloud Build에서 이미지 실행
 완료되며, 새 요청부터 새 리비전으로 전달됩니다. 운영에서는
 `MLFLOW_TRACKING_USERNAME`, `MLFLOW_TRACKING_PASSWORD`를 Cloud Run Secret Manager
 환경변수로 미리 연결해야 합니다. Cloud Build 실행 서비스 계정도 두 Secret의
-페이로드를 읽을 수 있어야 합니다. Stub은 로컬 계약 테스트에만 사용하며 운영 코드
-배포 Workflow에서는 선택할 수 없습니다.
+페이로드를 읽을 수 있어야 합니다. 운영 코드 배포 Workflow는 현재 운영 리비전의
+`mlflow` 모드와 정확한 숫자 모델 버전만 승계합니다.
 
 ### Serving·Training 이미지 변경 범위
 
