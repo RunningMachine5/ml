@@ -29,3 +29,17 @@ def test_github_runner_does_not_call_internal_cloud_run_url() -> None:
     assert 'if "ML_FRAUD_THRESHOLD" in environment:' in workflow
     assert "status.traffic[0]" not in workflow
     assert "revision_percent != {expected_revision: 100}" in workflow
+
+
+def test_github_actions_preserves_active_approved_model_version() -> None:
+    workflow = (
+        ROOT / ".github" / "workflows" / "deploy-serving.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "${{ vars.ML_MODEL_VERSION }}" not in workflow
+    assert "REPOSITORY_MODEL_VERSION" not in workflow
+    assert "DISPATCH_MODEL_VERSION" not in workflow
+    assert "inputs:\n      model_version:" not in workflow
+    assert 'gcloud run revisions describe "$active_revision"' in workflow
+    assert "exactly one approved" in workflow
+    assert 'github_env.write(f"MODEL_VERSION={model_version}\\n")' in workflow
