@@ -1,11 +1,15 @@
 """모델 서빙 스켈레톤의 HTTP 계약 테스트."""
 
 from collections.abc import Callable
+import math
 
 from fastapi.testclient import TestClient
 import pytest
 
-from fdshield_ml.common.feature_contract import MODEL_INPUT_COLUMNS
+from fdshield_ml.common.feature_contract import (
+    MODEL_FEATURE_COLUMNS,
+    MODEL_INPUT_COLUMNS,
+)
 from fdshield_ml.serving.app import create_app
 from fdshield_ml.serving.predictor import StubPredictor
 
@@ -39,20 +43,26 @@ def test_predict_returns_deterministic_stub_contract(
     )
 
     assert response.status_code == 200
-    assert response.json() == {
-        "transaction_id": "TEST_000001",
-        "is_fraud": True,
-        "fraud_probability": 0.95,
-        "shap": {
-            "Transaction_Amount": 0.35,
-            "Account_one_month_std_dev": 0.25,
-            "Customer_VPN_Indicator": 0.15,
-            "Unused_terminal_status": 0.15,
-            "Recipient_account_suspend_status": 0.0,
-        },
-        "model_name": "fdshield-rule-based-stub",
-        "model_version": "0",
-    }
+    body = response.json()
+    assert body["transaction_id"] == "TEST_000001"
+    assert body["is_fraud"] is True
+    assert body["fraud_probability"] > 0.85
+    assert body["model_name"] == "fdshield-rule-based-stub"
+    assert body["model_version"] == "0"
+    assert body["shap"]["Transaction_Amount"] > 0
+    assert body["shap"]["Account_amount_daily_limit"] > 0
+    assert body["shap"]["Account_one_month_std_dev"] > 0
+    assert body["shap"]["Customer_VPN_Indicator"] > 0
+    assert body["shap"]["Unused_terminal_status"] > 0
+    assert set(body["shap"]) == set(MODEL_FEATURE_COLUMNS)
+    assert sum(value != 0.0 for value in body["shap"].values()) >= 80
+    predicted_log_odds = math.log(
+        body["fraud_probability"] / (1 - body["fraud_probability"])
+    )
+    explained_log_odds = StubPredictor.BASE_LOG_ODDS + math.fsum(
+        body["shap"].values()
+    )
+    assert explained_log_odds == pytest.approx(predicted_log_odds, abs=0.01)
 
 
 def test_predict_returns_safe_result_below_threshold(
@@ -70,7 +80,53 @@ def test_predict_returns_safe_result_below_threshold(
 
     assert response.status_code == 200
     assert response.json()["is_fraud"] is False
-    assert response.json()["fraud_probability"] == 0.1
+    assert response.json()["fraud_probability"] < 0.2
+
+
+def test_compound_transaction_risk_increases_probability(
+    raw_features_factory: RawFeaturesFactory,
+) -> None:
+    client = TestClient(create_app())
+    safe = client.post(
+        "/predict",
+        json={
+            "transaction_id": "TEST_COMPARE_SAFE",
+            "features": raw_features_factory(
+                Customer_rooting_jailbreak_indicator=0,
+                Customer_increase_atm_limit=0,
+                Account_indicator_release_limit_excess=0,
+                Another_Person_Account=0,
+                Unused_account_status=0,
+                Transaction_Datetime="2025-01-12 13:04:05",
+                Number_of_transaction_with_the_account=20,
+                Transaction_history_with_the_account=10,
+            ),
+        },
+    ).json()
+    risky = client.post(
+        "/predict",
+        json={
+            "transaction_id": "TEST_COMPARE_RISKY",
+            "features": raw_features_factory(
+                Transaction_Amount=12_000_000,
+                Account_balance=5_000_000,
+                Account_amount_daily_limit=5_000_000,
+                Account_one_month_max_amount=3_000_000,
+                Account_one_month_std_dev=100_000,
+                Customer_VPN_Indicator=1,
+                Unused_terminal_status=1,
+                Recipient_account_suspend_status=1,
+                Distance=300.0,
+                **{"Time Difference": "0 days 00:30:00"},
+            ),
+        },
+    ).json()
+
+    assert safe["is_fraud"] is False
+    assert risky["is_fraud"] is True
+    assert risky["fraud_probability"] > safe["fraud_probability"] + 0.7
+    assert risky["shap"]["Recipient_account_suspend_status"] > 0.6
+    assert risky["shap"]["Distance"] > 0
 
 
 def test_stub_predictor_reads_serving_environment(
