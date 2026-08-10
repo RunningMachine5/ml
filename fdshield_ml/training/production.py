@@ -13,14 +13,20 @@ from mlflow.models import infer_signature
 from mlflow.tracking import MlflowClient
 from sklearn.metrics import (
     average_precision_score,
-    f1_score,
     confusion_matrix,
+    f1_score,
     precision_score,
     recall_score,
     roc_auc_score,
 )
 from xgboost import XGBClassifier
 
+from fdshield_ml.common.decision_threshold import (
+    DECISION_THRESHOLD_TAG,
+    resolve_model_decision_threshold,
+    store_model_decision_threshold,
+    validate_decision_threshold,
+)
 from fdshield_ml.common.feature_contract import (
     MODEL_FEATURE_COLUMNS,
     MODEL_INPUT_COLUMNS,
@@ -42,6 +48,7 @@ from fdshield_ml.training.dataset import (
     validate_binary_target,
     validate_preprocessed_features,
 )
+from fdshield_ml.training.pipeline import best_f1_threshold
 from fdshield_ml.training.tracking import configure_tracking, verify_connection
 
 
@@ -145,8 +152,13 @@ def _read_companion_transactions(data_path: str | Path) -> pd.DataFrame:
 def _evaluation_metrics(
     target: pd.Series,
     probability: pd.Series,
+    threshold: float,
 ) -> dict[str, float]:
-    predicted = probability.ge(0.5).astype("int8")
+    threshold = validate_decision_threshold(
+        threshold,
+        source="evaluation decision threshold",
+    )
+    predicted = probability.ge(threshold).astype("int8")
     tn, fp, _, _ = confusion_matrix(target, predicted, labels=[0, 1]).ravel()
     false_positive_rate = fp / (fp + tn) if fp + tn else 0.0
     return {
@@ -158,7 +170,7 @@ def _evaluation_metrics(
         ),
         "validation_f1": float(f1_score(target, predicted, zero_division=0)),
         "validation_fpr": float(false_positive_rate),
-        "decision_threshold": 0.5,
+        "decision_threshold": threshold,
     }
 
 
@@ -188,6 +200,14 @@ def _champion_evaluation(
         champion = mlflow.sklearn.load_model(
             f"models:/{config.registered_model_name}/{champion_version}"
         )
+        version = client.get_model_version(
+            config.registered_model_name,
+            str(champion_version),
+        )
+        threshold = resolve_model_decision_threshold(
+            champion,
+            model_version_tags=getattr(version, "tags", None),
+        )
         probability = pd.Series(
             champion.predict_proba(features)[:, 1],
             index=target.index,
@@ -196,7 +216,7 @@ def _champion_evaluation(
         raise ProductionTrainingError(
             "Failed to evaluate the current champion model."
         ) from exc
-    return champion_version, _evaluation_metrics(target, probability)
+    return champion_version, _evaluation_metrics(target, probability, threshold)
 
 
 def _promotion_recommendation(
@@ -322,7 +342,12 @@ def train_and_register_model(
         classifier.predict_proba(X_validation)[:, 1],
         index=y_validation.index,
     )
-    metrics = _evaluation_metrics(y_validation, probability)
+    decision_threshold = best_f1_threshold(
+        y_validation,
+        probability.to_numpy(),
+    )
+    store_model_decision_threshold(classifier, decision_threshold)
+    metrics = _evaluation_metrics(y_validation, probability, decision_threshold)
     validation_passed = (
         metrics["validation_pr_auc"] >= config.minimum_pr_auc
         and metrics["validation_recall"] >= config.minimum_recall
@@ -365,7 +390,7 @@ def train_and_register_model(
                 "random_state": config.random_state,
                 "minimum_pr_auc": config.minimum_pr_auc,
                 "minimum_recall": config.minimum_recall,
-                "decision_threshold": 0.5,
+                "decision_threshold": decision_threshold,
                 **split_metadata,
             }
         )
@@ -421,6 +446,12 @@ def train_and_register_model(
         str(model_version),
         "promotion_recommendation",
         recommendation,
+    )
+    client.set_model_version_tag(
+        config.registered_model_name,
+        str(model_version),
+        DECISION_THRESHOLD_TAG,
+        repr(decision_threshold),
     )
     promoted = False
 

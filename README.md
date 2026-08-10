@@ -715,7 +715,6 @@ uv run uvicorn fdshield_ml.serving.app:app --host 0.0.0.0 --port 8001
 | 환경변수 | 기본값 | 역할 |
 |---|---|---|
 | `ML_PREDICTOR_MODE` | `stub` | `stub` 또는 `mlflow` 선택 |
-| `ML_FRAUD_THRESHOLD` | `0.55` | 사기로 판정할 확률 임계값 |
 | `ML_MODEL_NAME` | `fdshield-rule-based-stub` | Registry 모델 이름 및 응답 모델명 |
 | `ML_MODEL_VERSION` | `0` | 로컬 Stub 값. `mlflow` 운영 배포는 1 이상의 정확한 숫자 Registry 버전 필수 |
 | `MLFLOW_TRACKING_URI` | 없음 | MLflow HTTPS 주소 (`mlflow` 모드 필수) |
@@ -726,6 +725,10 @@ uv run uvicorn fdshield_ml.serving.app:app --host 0.0.0.0 --port 8001
 로드에 실패하면 포트를 열지 않으므로 새 Cloud Run 리비전은 Ready가 되지 않고 기존
 리비전 트래픽은 그대로 유지됩니다. XGBoost 모델은 내장 contribution으로 설명값을
 반환하며 다른 `predict_proba` 모델은 빈 `shap`을 반환합니다.
+
+사기 판정 임계값은 환경변수로 전달하지 않습니다. 학습 검증 단계에서 모델별 값을
+산출해 직렬화된 모델과 Registry 버전 태그에 함께 저장하며, 후보·champion 비교와
+Serving은 해당 모델 버전에 저장된 값을 사용합니다.
 
 Docker로 Stub 서버를 실행할 때는 다음 명령을 사용합니다.
 

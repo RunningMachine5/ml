@@ -8,7 +8,12 @@ import mlflow
 import mlflow.sklearn
 import numpy as np
 import xgboost as xgb
+from mlflow.tracking import MlflowClient
 
+from fdshield_ml.common.decision_threshold import (
+    DecisionThresholdError,
+    resolve_model_decision_threshold,
+)
 from fdshield_ml.common.preprocessing import preprocess_transaction_features
 from fdshield_ml.serving.schemas import PredictionRequest, PredictionResponse
 
@@ -26,14 +31,19 @@ class MLflowPredictor:
         model: object,
         model_name: str,
         model_version: str,
-        threshold: float = 0.5,
+        model_version_tags: dict[str, str] | None = None,
     ) -> None:
         if not model_name.strip() or not model_version.strip():
             raise ValueError("model_name and model_version are required")
-        if not 0 <= threshold <= 1:
-            raise ValueError("threshold must be between 0 and 1")
         if not hasattr(model, "predict_proba"):
             raise TypeError("The registered model must provide predict_proba().")
+        try:
+            threshold = resolve_model_decision_threshold(
+                model,
+                model_version_tags=model_version_tags,
+            )
+        except DecisionThresholdError as exc:
+            raise ModelServingError(str(exc)) from exc
         self.model = model
         self.model_name = model_name
         self.model_version = model_version
@@ -41,7 +51,7 @@ class MLflowPredictor:
         self.ready = True
 
     @classmethod
-    def from_environment(cls) -> "MLflowPredictor":
+    def from_environment(cls) -> MLflowPredictor:
         tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "").strip().rstrip("/")
         username = os.getenv("MLFLOW_TRACKING_USERNAME", "").strip()
         password = os.getenv("MLFLOW_TRACKING_PASSWORD", "").strip()
@@ -60,13 +70,14 @@ class MLflowPredictor:
         model_uri = f"models:/{model_name}/{model_version}"
         try:
             model = mlflow.sklearn.load_model(model_uri)
+            version = MlflowClient().get_model_version(model_name, model_version)
         except Exception as exc:
             raise ModelServingError(f"Failed to load registered model: {model_uri}") from exc
         return cls(
             model=model,
             model_name=model_name,
             model_version=model_version,
-            threshold=float(os.getenv("ML_FRAUD_THRESHOLD", "0.5")),
+            model_version_tags=getattr(version, "tags", None),
         )
 
     def predict(self, request: PredictionRequest) -> PredictionResponse:

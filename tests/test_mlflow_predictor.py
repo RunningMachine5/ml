@@ -1,6 +1,7 @@
 """MLflow 고정 모델 버전 로딩과 실제 추론 계약 테스트."""
 
 from collections.abc import Callable
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -9,13 +10,14 @@ from fdshield_ml.serving import mlflow_predictor
 from fdshield_ml.serving.mlflow_predictor import MLflowPredictor, ModelServingError
 from fdshield_ml.serving.schemas import PredictionRequest
 
-
 RawFeaturesFactory = Callable[..., dict[str, object]]
 
 
 class FakeProbabilityModel:
+    decision_threshold_ = 0.9
+
     def predict_proba(self, features: object) -> np.ndarray:
-        assert getattr(features, "shape") == (1, 91)
+        assert features.shape == (1, 91)
         return np.asarray([[0.08, 0.92]])
 
 
@@ -26,7 +28,6 @@ def test_mlflow_predictor_returns_registered_model_metadata(
         model=FakeProbabilityModel(),
         model_name="fdshield-fraud-detector",
         model_version="17",
-        threshold=0.5,
     )
 
     result = predictor.predict(
@@ -62,6 +63,15 @@ def test_mlflow_predictor_loads_exact_numeric_registry_version(
         "load_model",
         lambda uri: calls.__setitem__("model_uri", uri) or FakeProbabilityModel(),
     )
+    monkeypatch.setattr(
+        mlflow_predictor,
+        "MlflowClient",
+        lambda: SimpleNamespace(
+            get_model_version=lambda name, version: SimpleNamespace(
+                tags={"decision_threshold": "0.9"}
+            )
+        ),
+    )
 
     predictor = MLflowPredictor.from_environment()
 
@@ -89,6 +99,8 @@ def test_mlflow_predictor_rejects_invalid_probability_shape(
     raw_features_factory: RawFeaturesFactory,
 ) -> None:
     class InvalidModel:
+        decision_threshold_ = 0.5
+
         def predict_proba(self, features: object) -> np.ndarray:
             return np.asarray([0.5])
 
@@ -104,4 +116,32 @@ def test_mlflow_predictor_rejects_invalid_probability_shape(
                 transaction_id="TX-BAD",
                 features=raw_features_factory(),
             )
+        )
+
+
+def test_mlflow_predictor_reads_legacy_model_version_threshold_tag() -> None:
+    predictor = MLflowPredictor(
+        model=type(
+            "LegacyProbabilityModel",
+            (),
+            {"predict_proba": lambda self, features: np.asarray([[0.4, 0.6]])},
+        )(),
+        model_name="fdshield-fraud-detector",
+        model_version="5",
+        model_version_tags={"decision_threshold": "0.55"},
+    )
+
+    assert predictor.threshold == pytest.approx(0.55)
+
+
+def test_mlflow_predictor_rejects_model_without_threshold() -> None:
+    with pytest.raises(ModelServingError, match="does not contain"):
+        MLflowPredictor(
+            model=type(
+                "MissingThresholdModel",
+                (),
+                {"predict_proba": lambda self, features: np.asarray([[0.4, 0.6]])},
+            )(),
+            model_name="fdshield-fraud-detector",
+            model_version="5",
         )

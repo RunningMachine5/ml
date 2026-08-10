@@ -21,12 +21,12 @@ import mlflow.sklearn
 import pandas as pd
 from mlflow.models import infer_signature
 
+from fdshield_ml.common.decision_threshold import store_model_decision_threshold
 from fdshield_ml.common.features import (
     FDShieldFeatureBuilder,
     feature_manifest,
     model_input_and_groups,
 )
-from fdshield_ml.training.tracking import configure_tracking, verify_connection
 from fdshield_ml.training.pipeline import (
     TrainingConfig,
     build_pipeline,
@@ -36,7 +36,7 @@ from fdshield_ml.training.pipeline import (
     model_parameters,
     stratified_sample,
 )
-
+from fdshield_ml.training.tracking import configure_tracking, verify_connection
 
 MODEL_TYPES = (
     "logistic-regression",
@@ -279,6 +279,10 @@ def main() -> None:
         # 8. 전처리와 모델을 함께 저장해 추론 시 동일한 변환을 재사용한다.
         input_example = split.X_validation.head(5).copy()
         predicted_example = pipeline.predict_proba(input_example)
+        store_model_decision_threshold(
+            pipeline,
+            evaluation.metrics["decision_threshold"],
+        )
 
         # Signature는 모델 서버가 기대하는 입력/출력 스키마를 MLflow에 남긴다.
         signature = infer_signature(input_example, predicted_example)
