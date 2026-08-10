@@ -43,3 +43,12 @@ def test_github_actions_preserves_active_approved_model_version() -> None:
     assert 'gcloud run revisions describe "$active_revision"' in workflow
     assert "exactly one approved" in workflow
     assert 'github_env.write(f"MODEL_VERSION={model_version}\\n")' in workflow
+
+
+def test_training_deploy_removes_legacy_promotion_environment() -> None:
+    workflow = (
+        ROOT / ".github" / "workflows" / "deploy-training.yml"
+    ).read_text(encoding="utf-8")
+
+    assert '--remove-env-vars="MLFLOW_AUTO_PROMOTE"' in workflow
+    assert "Legacy automatic promotion environment is absent." in workflow

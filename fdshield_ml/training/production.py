@@ -60,7 +60,6 @@ class ProductionTrainingError(RuntimeError):
 class ProductionTrainingConfig:
     registered_model_name: str
     model_alias: str = "champion"
-    auto_promote: bool = False
     minimum_pr_auc: float = 0.0
     minimum_recall: float = 0.0
     champion_model_version: int | None = None
@@ -83,10 +82,6 @@ class ProductionTrainingConfig:
             raise ValueError("registered_model_name is required")
         if not self.model_alias.strip():
             raise ValueError("model_alias is required")
-        if self.auto_promote:
-            raise ValueError(
-                "auto_promote is disabled; an administrator must approve a candidate"
-            )
         for name in ("minimum_pr_auc", "minimum_recall"):
             if not 0 <= getattr(self, name) <= 1:
                 raise ValueError(f"{name} must be between 0 and 1")
@@ -118,7 +113,6 @@ class ProductionTrainingResult:
     model_version: int
     metrics: dict[str, float]
     validation_passed: bool
-    promoted: bool
     recommendation: str
     champion_model_version: int | None
     champion_metrics: dict[str, float] | None
@@ -453,14 +447,11 @@ def train_and_register_model(
         DECISION_THRESHOLD_TAG,
         repr(decision_threshold),
     )
-    promoted = False
-
     return ProductionTrainingResult(
         run_id=run_id,
         model_version=int(model_version),
         metrics=metrics,
         validation_passed=validation_passed,
-        promoted=promoted,
         recommendation=recommendation,
         champion_model_version=champion_model_version,
         champion_metrics=champion_metrics,
