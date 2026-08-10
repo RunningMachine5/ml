@@ -871,11 +871,16 @@ gcloud builds submit \
 
 ### Serving 모델 무중단 배포
 
-`.github/workflows/deploy-serving.yml`은 `main` Push 자동 실행에서 GitHub Repository
-Variables의 `ML_PREDICTOR_MODE=mlflow`, `ML_MODEL_NAME`, 1 이상의 정확한 숫자
-`ML_MODEL_VERSION`을 요구합니다. 값이 없거나 `stub`, `0`, `latest`, alias이면 인증과
-Cloud Build 전에 실패하므로 코드 병합만으로 Stub이 운영에 자동 승격되지 않습니다.
-수동 실행도 `mlflow`일 때는 모델 이름과 숫자 버전을 명시해야 합니다.
+`.github/workflows/deploy-serving.yml`은 GitHub Repository Variables나 수동 입력으로
+운영 모델을 선택하지 않습니다. `main` Push와 수동 코드 배포 모두 현재 트래픽을 100%
+받는 Cloud Run 리비전의 `ML_PREDICTOR_MODE`, `ML_MODEL_NAME`, `ML_MODEL_VERSION`을 읽어
+그대로 승계합니다. 트래픽이 여러 리비전에 분산되어 있거나 운영 리비전이 정확한 숫자
+버전의 MLflow 모델을 사용하지 않으면 새 코드를 배포하지 않습니다.
+
+새 모델 버전은 Training Job이 MLflow Registry에 등록하며, MLflow가 발급한 정확한
+버전을 결과 Callback으로 Backend에 전달합니다. 이후 Backend DB 저장과 관리자 승인,
+0% 신규 리비전 및 smoke를 거친 경우에만 Cloud Run 모델 버전이 바뀝니다. 따라서
+GitHub Actions는 Serving 코드 이미지만 교체하고 모델 승인 경로를 우회하지 않습니다.
 
 배포는 기존 Cloud Run 서비스의 `MLFLOW_TRACKING_URI`와 Secret Manager로 연결된
 `MLFLOW_TRACKING_USERNAME`, `MLFLOW_TRACKING_PASSWORD`도 Cloud Build 전에 확인합니다.
@@ -897,8 +902,8 @@ Cloud Build에서 이미지 실행
 완료되며, 새 요청부터 새 리비전으로 전달됩니다. 운영에서는
 `MLFLOW_TRACKING_USERNAME`, `MLFLOW_TRACKING_PASSWORD`를 Cloud Run Secret Manager
 환경변수로 미리 연결해야 합니다. Cloud Build 실행 서비스 계정도 두 Secret의
-페이로드를 읽을 수 있어야 합니다. 수동 `stub` 실행은 이미지와 0% 태그 리비전
-검증까지만 수행하며 성공해도 해당 리비전을 운영 트래픽에서 격리합니다.
+페이로드를 읽을 수 있어야 합니다. Stub은 로컬 계약 테스트에만 사용하며 운영 코드
+배포 Workflow에서는 선택할 수 없습니다.
 
 ### Serving·Training 이미지 변경 범위
 
