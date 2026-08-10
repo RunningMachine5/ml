@@ -90,7 +90,7 @@ def test_production_training_config_rejects_invalid_gate() -> None:
         )
 
 
-def test_train_registers_candidate_without_automatic_promotion(
+def test_train_registers_candidate_with_comparison_metadata(
     tmp_path: Path,
     raw_features_factory: RawFeaturesFactory,
     monkeypatch: pytest.MonkeyPatch,
@@ -118,7 +118,6 @@ def test_train_registers_candidate_without_automatic_promotion(
     assert result.run_id == "run-123"
     assert result.model_version == 17
     assert result.validation_passed is True
-    assert result.promoted is False
     assert result.recommendation == "REVIEW_REQUIRED"
     assert calls["tags"][:2] == [
         ("fdshield-fraud-detector", "17", "validation_status", "passed"),

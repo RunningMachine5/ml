@@ -815,7 +815,6 @@ docker run --rm `
 | `TRAINING_MODE` | `train` | API override | `validate` 또는 실제 `train` |
 | `MLFLOW_REGISTERED_MODEL_NAME` | `fdshield-fraud-detector` | API override | Registry 모델 이름 |
 | `MLFLOW_MODEL_ALIAS` | `champion` | API override | 상대 비교할 현재 운영 alias |
-| `MLFLOW_AUTO_PROMOTE` | `false` | API override | 관리자 승인 정책상 `false`만 허용 |
 | `MODEL_MIN_PR_AUC` | `0.0` | API override | 후보 유효성 최소 PR-AUC |
 | `MODEL_MIN_RECALL` | `0.0` | API override | 후보 유효성 최소 Recall |
 | `BACKEND_TRAINING_RUN_ID` | 없음 | API override | Backend `training_runs.id` |

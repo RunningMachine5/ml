@@ -135,6 +135,7 @@ jobs:
             --project="$GCP_PROJECT_ID" \
             --region="$GCP_REGION" \
             --image="$DEPLOY_DIGEST" \
+            --remove-env-vars="MLFLOW_AUTO_PROMOTE" \
             --quiet
 
       - name: Verify configured Training Job image
@@ -152,6 +153,34 @@ jobs:
             echo "Configured: $configured_image"
             exit 1
           fi
+
+          job_config="$RUNNER_TEMP/training-job.json"
+          gcloud run jobs describe "$CLOUD_RUN_JOB" \
+            --project="$GCP_PROJECT_ID" \
+            --region="$GCP_REGION" \
+            --format=json > "$job_config"
+          python3 - "$job_config" <<'PY'
+          import json
+          import sys
+
+          job = json.load(open(sys.argv[1], encoding="utf-8"))
+          containers = (
+              job.get("spec", {})
+              .get("template", {})
+              .get("spec", {})
+              .get("template", {})
+              .get("spec", {})
+              .get("containers", [])
+          )
+          environment_names = {
+              item.get("name")
+              for container in containers
+              for item in container.get("env", [])
+          }
+          if "MLFLOW_AUTO_PROMOTE" in environment_names:
+              raise SystemExit("::error::Legacy automatic promotion environment remains")
+          print("Legacy automatic promotion environment is absent.")
+          PY
 
           echo "Cloud Run Training Job image updated: $configured_image"
           echo "The Training Job was not executed by this deployment."

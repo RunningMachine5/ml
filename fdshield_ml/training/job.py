@@ -69,7 +69,6 @@ class TrainingJobConfig:
     mode: str = "validate"
     registered_model_name: str = ""
     model_alias: str = "champion"
-    auto_promote: bool = False
     minimum_pr_auc: float = 0.0
     minimum_recall: float = 0.0
     backend_training_run_id: int | None = None
@@ -140,13 +139,6 @@ class TrainingJobConfig:
                 "TRAINING_SPLIT_DATETIME must be an ISO datetime"
             ) from exc
 
-        auto_promote_value = environ.get("MLFLOW_AUTO_PROMOTE", "false").strip().lower()
-        if auto_promote_value not in {"true", "false"}:
-            raise ValueError("MLFLOW_AUTO_PROMOTE must be true or false")
-        if auto_promote_value == "true":
-            raise ValueError(
-                "MLFLOW_AUTO_PROMOTE must be false; an administrator approves candidates"
-            )
         try:
             minimum_pr_auc = float(environ.get("MODEL_MIN_PR_AUC", "0"))
             minimum_recall = float(environ.get("MODEL_MIN_RECALL", "0"))
@@ -186,7 +178,6 @@ class TrainingJobConfig:
 
         return cls(
             **values,
-            auto_promote=auto_promote_value == "true",
             minimum_pr_auc=minimum_pr_auc,
             minimum_recall=minimum_recall,
             backend_training_run_id=backend_training_run_id,
@@ -199,7 +190,6 @@ class TrainingJobConfig:
         return ProductionTrainingConfig(
             registered_model_name=self.registered_model_name,
             model_alias=self.model_alias,
-            auto_promote=self.auto_promote,
             minimum_pr_auc=self.minimum_pr_auc,
             minimum_recall=self.minimum_recall,
             split_datetime=self.split_datetime,
@@ -365,7 +355,6 @@ def run_model_training(
         registered_model_name=config.registered_model_name,
         model_version=result.model_version,
         validation_passed=result.validation_passed,
-        promoted=result.promoted,
         metrics=result.metrics,
         recommendation=result.recommendation,
         champion_model_version=result.champion_model_version,
