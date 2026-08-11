@@ -7,14 +7,15 @@ Stub URI는 인프라 실행만 확인하고, 로컬 경로와 GCS URI는 학습
 
 from __future__ import annotations
 
+import json
+import os
+import sys
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager, ExitStack
 from dataclasses import asdict, dataclass
 from datetime import datetime
-import json
-import os
 from pathlib import Path
-import sys
+from time import sleep
 from typing import TextIO
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -26,11 +27,11 @@ from fdshield_ml.training.data_loader import (
     inspect_training_csv,
     materialize_training_data,
 )
+from fdshield_ml.training.dataset import DEFAULT_SPLIT_DATETIME
 from fdshield_ml.training.job_tracking import (
     TrainingTrackingError,
     log_data_validation_run,
 )
-from fdshield_ml.training.dataset import DEFAULT_SPLIT_DATETIME
 from fdshield_ml.training.production import (
     ProductionTrainingConfig,
     ProductionTrainingError,
@@ -50,11 +51,54 @@ ProductionTrainingRunner = Callable[
     [str | Path, str, ProductionTrainingConfig, str | Path | None],
     ProductionTrainingResult,
 ]
-TrainingResultNotifier = Callable[["TrainingJobConfig", dict[str, object]], None]
+
+CALLBACK_MAX_ATTEMPTS = 3
+CALLBACK_RETRY_DELAYS_SECONDS = (1.0, 2.0)
 
 
 class TrainingResultNotificationError(RuntimeError):
     """Backend에 학습 결과를 기록하지 못했을 때 발생한다."""
+
+
+@dataclass(frozen=True)
+class TrainingCallbackConfig:
+    """전체 학습 설정이 잘못돼도 Backend 실패 콜백에 필요한 최소 설정."""
+
+    backend_training_run_id: int | None = None
+    result_callback_url: str = ""
+    result_callback_token: str = ""
+    cloud_run_execution_name: str = ""
+
+    @classmethod
+    def from_env(cls, environ: Mapping[str, str]) -> TrainingCallbackConfig:
+        backend_training_run_id_value = environ.get(
+            "BACKEND_TRAINING_RUN_ID", ""
+        ).strip()
+        callback_url = environ.get("TRAINING_RESULT_CALLBACK_URL", "").strip()
+        callback_token = environ.get("TRAINING_RESULT_CALLBACK_TOKEN", "").strip()
+        cloud_run_execution_name = environ.get("CLOUD_RUN_EXECUTION", "").strip()
+
+        if not backend_training_run_id_value:
+            return cls(cloud_run_execution_name=cloud_run_execution_name)
+
+        try:
+            backend_training_run_id = int(backend_training_run_id_value)
+        except ValueError as exc:
+            raise ValueError("BACKEND_TRAINING_RUN_ID must be an integer") from exc
+        if backend_training_run_id < 1:
+            raise ValueError("BACKEND_TRAINING_RUN_ID must be positive")
+        if not callback_url or not callback_token:
+            raise ValueError(
+                "TRAINING_RESULT_CALLBACK_URL and TOKEN are required with "
+                "BACKEND_TRAINING_RUN_ID"
+            )
+
+        return cls(
+            backend_training_run_id=backend_training_run_id,
+            result_callback_url=callback_url,
+            result_callback_token=callback_token,
+            cloud_run_execution_name=cloud_run_execution_name,
+        )
 
 
 @dataclass(frozen=True)
@@ -74,10 +118,11 @@ class TrainingJobConfig:
     backend_training_run_id: int | None = None
     result_callback_url: str = ""
     result_callback_token: str = ""
-    champion_model_version: int | None = None
+    cloud_run_execution_name: str = ""
 
     @classmethod
-    def from_env(cls, environ: Mapping[str, str]) -> "TrainingJobConfig":
+    def from_env(cls, environ: Mapping[str, str]) -> TrainingJobConfig:
+        callback = TrainingCallbackConfig.from_env(environ)
         values = {
             "job_type": environ.get("TRAINING_JOB_TYPE", "").strip().lower(),
             "data_uri": environ.get("TRAINING_DATA_URI", "").strip(),
@@ -95,6 +140,7 @@ class TrainingJobConfig:
                 "MLFLOW_REGISTERED_MODEL_NAME", ""
             ).strip(),
             "model_alias": environ.get("MLFLOW_MODEL_ALIAS", "champion").strip(),
+            "cloud_run_execution_name": callback.cloud_run_execution_name,
         }
 
         missing = [
@@ -145,45 +191,13 @@ class TrainingJobConfig:
         except ValueError as exc:
             raise ValueError("MODEL_MIN_PR_AUC and MODEL_MIN_RECALL must be numbers") from exc
 
-        backend_training_run_id_value = environ.get(
-            "BACKEND_TRAINING_RUN_ID", ""
-        ).strip()
-        callback_url = environ.get("TRAINING_RESULT_CALLBACK_URL", "").strip()
-        callback_token = environ.get("TRAINING_RESULT_CALLBACK_TOKEN", "").strip()
-        champion_model_version_value = environ.get(
-            "CHAMPION_MODEL_VERSION", ""
-        ).strip()
-        if backend_training_run_id_value:
-            try:
-                backend_training_run_id = int(backend_training_run_id_value)
-            except ValueError as exc:
-                raise ValueError("BACKEND_TRAINING_RUN_ID must be an integer") from exc
-            if backend_training_run_id < 1:
-                raise ValueError("BACKEND_TRAINING_RUN_ID must be positive")
-            if not callback_url or not callback_token:
-                raise ValueError(
-                    "TRAINING_RESULT_CALLBACK_URL and TOKEN are required with BACKEND_TRAINING_RUN_ID"
-                )
-        else:
-            backend_training_run_id = None
-        if champion_model_version_value:
-            try:
-                champion_model_version = int(champion_model_version_value)
-            except ValueError as exc:
-                raise ValueError("CHAMPION_MODEL_VERSION must be an integer") from exc
-            if champion_model_version < 1:
-                raise ValueError("CHAMPION_MODEL_VERSION must be positive")
-        else:
-            champion_model_version = None
-
         return cls(
             **values,
             minimum_pr_auc=minimum_pr_auc,
             minimum_recall=minimum_recall,
-            backend_training_run_id=backend_training_run_id,
-            result_callback_url=callback_url,
-            result_callback_token=callback_token,
-            champion_model_version=champion_model_version,
+            backend_training_run_id=callback.backend_training_run_id,
+            result_callback_url=callback.result_callback_url,
+            result_callback_token=callback.result_callback_token,
         )
 
     def production_config(self) -> ProductionTrainingConfig:
@@ -193,8 +207,11 @@ class TrainingJobConfig:
             minimum_pr_auc=self.minimum_pr_auc,
             minimum_recall=self.minimum_recall,
             split_datetime=self.split_datetime,
-            champion_model_version=self.champion_model_version,
         )
+
+
+CallbackConfig = TrainingJobConfig | TrainingCallbackConfig
+TrainingResultNotifier = Callable[[CallbackConfig, dict[str, object]], None]
 
 
 def _write_event(stream: TextIO, event: str, **fields: object) -> None:
@@ -216,35 +233,107 @@ def _config_log_fields(config: TrainingJobConfig) -> dict[str, object]:
 
 
 def notify_training_result(
-    config: TrainingJobConfig,
+    config: CallbackConfig,
     payload: dict[str, object],
+    *,
+    opener: Callable[..., object] = urlopen,
+    sleeper: Callable[[float], None] = sleep,
 ) -> None:
-    """설정된 경우 Backend 학습 이력에 성공·실패 결과를 기록한다."""
+    """Backend에 최소 학습 결과를 기록하고 일시적 실패는 재시도한다."""
 
     if config.backend_training_run_id is None:
         return
     url = config.result_callback_url.format(
         training_run_id=config.backend_training_run_id
     )
-    request = Request(
-        url,
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "X-MLOps-Admin-Token": config.result_callback_token,
-        },
-        method="POST",
-    )
-    try:
-        with urlopen(request, timeout=20) as response:
-            if response.status < 200 or response.status >= 300:
+    encoded_payload = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    for attempt in range(1, CALLBACK_MAX_ATTEMPTS + 1):
+        request = Request(
+            url,
+            data=encoded_payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-MLOps-Admin-Token": config.result_callback_token,
+            },
+            method="POST",
+        )
+        try:
+            with opener(request, timeout=20) as response:  # type: ignore[attr-defined]
+                status = response.status  # type: ignore[attr-defined]
+                if 200 <= status < 300:
+                    return
+                if not _is_retryable_callback_status(status):
+                    raise TrainingResultNotificationError(
+                        f"Backend callback returned HTTP {status}."
+                    )
+        except HTTPError as exc:
+            if not _is_retryable_callback_status(exc.code):
                 raise TrainingResultNotificationError(
-                    f"Backend callback returned HTTP {response.status}."
-                )
-    except (HTTPError, URLError, TimeoutError, OSError) as exc:
-        raise TrainingResultNotificationError(
-            "Failed to record the training result in Backend."
-        ) from exc
+                    f"Backend callback returned HTTP {exc.code}."
+                ) from exc
+            last_error: BaseException = exc
+        except (URLError, TimeoutError, OSError) as exc:
+            last_error = exc
+        else:
+            last_error = TrainingResultNotificationError(
+                "Backend callback returned a retryable HTTP status."
+            )
+
+        if attempt < CALLBACK_MAX_ATTEMPTS:
+            sleeper(CALLBACK_RETRY_DELAYS_SECONDS[attempt - 1])
+
+    raise TrainingResultNotificationError(
+        "Failed to record the training result in Backend after retries."
+    ) from last_error
+
+
+def _is_retryable_callback_status(status: int) -> bool:
+    """재호출해도 안전한 일시적 HTTP 오류인지 판별한다."""
+
+    return status in {408, 429} or status >= 500
+
+
+def _with_cloud_run_execution(
+    config: CallbackConfig,
+    payload: dict[str, object],
+) -> dict[str, object]:
+    """Cloud Run이 자동 제공한 실행 이름을 설정된 경우에만 추가한다."""
+
+    if not config.cloud_run_execution_name:
+        return payload
+    return {
+        **payload,
+        "cloud_run_execution_name": config.cloud_run_execution_name,
+    }
+
+
+def _notify_training_failure(
+    config: CallbackConfig | None,
+    error: BaseException,
+    result_notifier: TrainingResultNotifier,
+    stderr: TextIO,
+) -> None:
+    """가능한 경우 원래 실패 코드를 보존하며 Backend 상태를 FAILED로 종결한다."""
+
+    if config is None or config.backend_training_run_id is None:
+        return
+    try:
+        result_notifier(
+            config,
+            _with_cloud_run_execution(
+                config,
+                {
+                    "status": "FAILED",
+                    "error_message": str(error)[:1000],
+                },
+            ),
+        )
+    except TrainingResultNotificationError as callback_error:
+        _write_event(
+            stderr,
+            "training_result_notification_error",
+            message=str(callback_error),
+        )
 
 
 def run_stub(config: TrainingJobConfig, stream: TextIO = sys.stdout) -> None:
@@ -362,27 +451,13 @@ def run_model_training(
     )
     result_notifier(
         config,
-        {
-            "status": "SUCCEEDED",
-            "mlflow_run_id": result.run_id,
-            "model_version": str(result.model_version),
-            "comparison_result": {
-                "candidate": {
-                    "model_version": str(result.model_version),
-                    "metrics": result.metrics,
-                },
-                "production": (
-                    {
-                        "model_version": str(result.champion_model_version),
-                        "metrics": result.champion_metrics,
-                    }
-                    if result.champion_model_version is not None
-                    and result.champion_metrics is not None
-                    else None
-                ),
-                "recommendation": result.recommendation,
+        _with_cloud_run_execution(
+            config,
+            {
+                "status": "SUCCEEDED",
+                "mlflow_run_id": result.run_id,
             },
-        },
+        ),
     )
     _write_event(
         stream,
@@ -406,8 +481,11 @@ def main(
     """환경변수를 검증하고 성공 여부를 프로세스 종료 코드로 반환한다."""
 
     config: TrainingJobConfig | None = None
+    callback_config: TrainingCallbackConfig | None = None
+    source_environ = os.environ if environ is None else environ
     try:
-        config = TrainingJobConfig.from_env(os.environ if environ is None else environ)
+        callback_config = TrainingCallbackConfig.from_env(source_environ)
+        config = TrainingJobConfig.from_env(source_environ)
         if config.mode == "train":
             run_model_training(
                 config,
@@ -429,29 +507,25 @@ def main(
         _write_event(stderr, "training_result_notification_error", message=str(error))
         return 6
     except TrainingTrackingError as error:
+        _notify_training_failure(config or callback_config, error, result_notifier, stderr)
         _write_event(stderr, "training_tracking_error", message=str(error))
         return 4
     except ProductionTrainingError as error:
-        if config is not None:
-            try:
-                result_notifier(
-                    config,
-                    {"status": "FAILED", "error_message": str(error)},
-                )
-            except TrainingResultNotificationError as callback_error:
-                _write_event(
-                    stderr,
-                    "training_result_notification_error",
-                    message=str(callback_error),
-                )
+        _notify_training_failure(config or callback_config, error, result_notifier, stderr)
         _write_event(stderr, "production_training_error", message=str(error))
         return 5
     except TrainingDataError as error:
+        _notify_training_failure(config or callback_config, error, result_notifier, stderr)
         _write_event(stderr, "training_data_error", message=str(error))
         return 3
     except ValueError as error:
+        _notify_training_failure(config or callback_config, error, result_notifier, stderr)
         _write_event(stderr, "training_job_configuration_error", message=str(error))
         return 2
+    except Exception as error:
+        _notify_training_failure(config or callback_config, error, result_notifier, stderr)
+        _write_event(stderr, "unexpected_training_error", message=str(error))
+        return 1
 
     return 0
 

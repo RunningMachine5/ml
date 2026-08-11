@@ -5,15 +5,22 @@ from __future__ import annotations
 import io
 import json
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 
 import pandas as pd
 import pytest
 
 from fdshield_ml.training.data_loader import TrainingDataSummary
-from fdshield_ml.training.job import TrainingJobConfig, main
+from fdshield_ml.training.job import (
+    TrainingJobConfig,
+    TrainingResultNotificationError,
+    main,
+    notify_training_result,
+)
 from fdshield_ml.training.job_tracking import TrainingTrackingError
 from fdshield_ml.training.production import (
     ProductionTrainingConfig,
+    ProductionTrainingError,
     ProductionTrainingResult,
 )
 
@@ -173,6 +180,35 @@ def test_training_job_main_reports_configuration_error() -> None:
     assert error["event"] == "training_job_configuration_error"
 
 
+def test_training_job_configuration_failure_notifies_backend() -> None:
+    environ = {
+        **VALID_ENV,
+        "TRAINING_JOB_TYPE": "unsupported",
+        "BACKEND_TRAINING_RUN_ID": "7",
+        "CLOUD_RUN_EXECUTION": "fdshield-binary-training-config1",
+        "TRAINING_RESULT_CALLBACK_URL": (
+            "https://api.example/mlops/training/runs/{training_run_id}/result"
+        ),
+        "TRAINING_RESULT_CALLBACK_TOKEN": "callback-secret",
+    }
+    notifications: list[dict[str, object]] = []
+
+    exit_code = main(
+        environ,
+        stderr=io.StringIO(),
+        result_notifier=lambda config, payload: notifications.append(payload),
+    )
+
+    assert exit_code == 2
+    assert notifications == [
+        {
+            "status": "FAILED",
+            "error_message": "TRAINING_JOB_TYPE must be one of: binary",
+            "cloud_run_execution_name": "fdshield-binary-training-config1",
+        }
+    ]
+
+
 def test_training_job_main_validates_local_csv(tmp_path: Path) -> None:
     source = tmp_path / "train.csv"
     pd.DataFrame(
@@ -273,6 +309,7 @@ def test_training_job_main_reports_candidate_result(tmp_path: Path) -> None:
         "TRAINING_SPLIT_DATETIME": "2026-05-01 00:00:00",
         "MLFLOW_REGISTERED_MODEL_NAME": "fdshield-fraud-detector",
         "BACKEND_TRAINING_RUN_ID": "7",
+        "CLOUD_RUN_EXECUTION": "fdshield-binary-training-abc12",
         "TRAINING_RESULT_CALLBACK_URL": (
             "https://api.example/mlops/training/runs/{training_run_id}/result"
         ),
@@ -333,9 +370,184 @@ def test_training_job_main_reports_candidate_result(tmp_path: Path) -> None:
     ]
     assert events[1]["model_version"] == 17
     assert events[1]["recommendation"] == "RECOMMENDED"
-    assert notifications[0]["status"] == "SUCCEEDED"
-    assert notifications[0]["model_version"] == "17"
-    comparison = notifications[0]["comparison_result"]
-    assert comparison["candidate"]["model_version"] == "17"
-    assert comparison["production"]["model_version"] == "1"
-    assert comparison["recommendation"] == "RECOMMENDED"
+    assert notifications == [
+        {
+            "status": "SUCCEEDED",
+            "mlflow_run_id": "run-123",
+            "cloud_run_execution_name": "fdshield-binary-training-abc12",
+        }
+    ]
+
+
+def test_training_result_callback_retries_same_payload_on_transient_error() -> None:
+    config = TrainingJobConfig.from_env(
+        {
+            **VALID_ENV,
+            "BACKEND_TRAINING_RUN_ID": "7",
+            "TRAINING_RESULT_CALLBACK_URL": (
+                "https://api.example/mlops/training/runs/{training_run_id}/result"
+            ),
+            "TRAINING_RESULT_CALLBACK_TOKEN": "callback-secret",
+        }
+    )
+    attempts: list[dict[str, object]] = []
+    delays: list[float] = []
+
+    class SuccessfulResponse:
+        status = 204
+
+        def __enter__(self) -> "SuccessfulResponse":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    def flaky_opener(request: object, timeout: int) -> SuccessfulResponse:
+        assert timeout == 20
+        attempts.append(json.loads(request.data))  # type: ignore[attr-defined]
+        if len(attempts) < 3:
+            raise URLError("temporary unavailable")
+        return SuccessfulResponse()
+
+    payload: dict[str, object] = {
+        "status": "SUCCEEDED",
+        "mlflow_run_id": "run-123",
+    }
+    notify_training_result(
+        config,
+        payload,
+        opener=flaky_opener,
+        sleeper=delays.append,
+    )
+
+    assert attempts == [payload, payload, payload]
+    assert delays == [1.0, 2.0]
+
+
+def test_training_result_callback_does_not_retry_conflict() -> None:
+    config = TrainingJobConfig.from_env(
+        {
+            **VALID_ENV,
+            "BACKEND_TRAINING_RUN_ID": "7",
+            "TRAINING_RESULT_CALLBACK_URL": (
+                "https://api.example/mlops/training/runs/{training_run_id}/result"
+            ),
+            "TRAINING_RESULT_CALLBACK_TOKEN": "callback-secret",
+        }
+    )
+    attempts = 0
+
+    def conflict_opener(request: object, timeout: int) -> object:
+        nonlocal attempts
+        attempts += 1
+        raise HTTPError(
+            "https://api.example/mlops/training/runs/7/result",
+            409,
+            "Conflict",
+            hdrs=None,
+            fp=None,
+        )
+
+    with pytest.raises(TrainingResultNotificationError, match="HTTP 409"):
+        notify_training_result(
+            config,
+            {"status": "FAILED"},
+            opener=conflict_opener,
+            sleeper=lambda _: None,
+        )
+
+    assert attempts == 1
+
+
+def test_training_data_failure_notifies_backend(tmp_path: Path) -> None:
+    environ = {
+        **VALID_ENV,
+        "TRAINING_MODE": "train",
+        "TRAINING_DATA_URI": str(tmp_path / "missing.csv"),
+        "MLFLOW_REGISTERED_MODEL_NAME": "fdshield-fraud-detector",
+        "BACKEND_TRAINING_RUN_ID": "7",
+        "TRAINING_RESULT_CALLBACK_URL": (
+            "https://api.example/mlops/training/runs/{training_run_id}/result"
+        ),
+        "TRAINING_RESULT_CALLBACK_TOKEN": "callback-secret",
+    }
+    notifications: list[dict[str, object]] = []
+
+    exit_code = main(
+        environ,
+        stderr=io.StringIO(),
+        result_notifier=lambda config, payload: notifications.append(payload),
+    )
+
+    assert exit_code == 3
+    assert notifications[0]["status"] == "FAILED"
+    assert "missing.csv" in str(notifications[0]["error_message"])
+
+
+def test_production_training_failure_notifies_backend(tmp_path: Path) -> None:
+    source = tmp_path / "transactions.csv"
+    source.write_text("placeholder", encoding="utf-8")
+    environ = {
+        **VALID_ENV,
+        "TRAINING_MODE": "train",
+        "TRAINING_DATA_URI": str(source),
+        "MLFLOW_REGISTERED_MODEL_NAME": "fdshield-fraud-detector",
+        "BACKEND_TRAINING_RUN_ID": "7",
+        "CLOUD_RUN_EXECUTION": "fdshield-binary-training-failed1",
+        "TRAINING_RESULT_CALLBACK_URL": (
+            "https://api.example/mlops/training/runs/{training_run_id}/result"
+        ),
+        "TRAINING_RESULT_CALLBACK_TOKEN": "callback-secret",
+    }
+    notifications: list[dict[str, object]] = []
+
+    def failed_training_runner(*args: object) -> ProductionTrainingResult:
+        raise ProductionTrainingError("MLflow registration failed")
+
+    exit_code = main(
+        environ,
+        stderr=io.StringIO(),
+        training_runner=failed_training_runner,
+        result_notifier=lambda config, payload: notifications.append(payload),
+    )
+
+    assert exit_code == 5
+    assert notifications == [
+        {
+            "status": "FAILED",
+            "error_message": "MLflow registration failed",
+            "cloud_run_execution_name": "fdshield-binary-training-failed1",
+        }
+    ]
+
+
+def test_unexpected_training_failure_notifies_backend(tmp_path: Path) -> None:
+    source = tmp_path / "transactions.csv"
+    source.write_text("placeholder", encoding="utf-8")
+    environ = {
+        **VALID_ENV,
+        "TRAINING_MODE": "train",
+        "TRAINING_DATA_URI": str(source),
+        "MLFLOW_REGISTERED_MODEL_NAME": "fdshield-fraud-detector",
+        "BACKEND_TRAINING_RUN_ID": "7",
+        "TRAINING_RESULT_CALLBACK_URL": (
+            "https://api.example/mlops/training/runs/{training_run_id}/result"
+        ),
+        "TRAINING_RESULT_CALLBACK_TOKEN": "callback-secret",
+    }
+    notifications: list[dict[str, object]] = []
+    stderr = io.StringIO()
+
+    def crashed_training_runner(*args: object) -> ProductionTrainingResult:
+        raise RuntimeError("unexpected xgboost failure")
+
+    exit_code = main(
+        environ,
+        stderr=stderr,
+        training_runner=crashed_training_runner,
+        result_notifier=lambda config, payload: notifications.append(payload),
+    )
+
+    assert exit_code == 1
+    assert notifications[0]["status"] == "FAILED"
+    assert json.loads(stderr.getvalue())["event"] == "unexpected_training_error"
