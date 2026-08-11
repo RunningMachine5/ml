@@ -10,6 +10,7 @@ from fdshield_ml.common.decision_threshold import (
     resolve_model_decision_threshold,
 )
 from fdshield_ml.common.preprocessing import preprocess_transaction_features
+from fdshield_ml.common.xgboost_prediction import prediction_iteration_range
 from fdshield_ml.serving.schemas import PredictionRequest, PredictionResponse
 
 
@@ -77,7 +78,11 @@ class ModelPredictor:
             booster = get_booster()
             matrix = xgb.DMatrix(features, feature_names=list(features.columns))
             contributions = np.asarray(
-                booster.predict(matrix, pred_contribs=True),
+                booster.predict(
+                    matrix,
+                    pred_contribs=True,
+                    iteration_range=prediction_iteration_range(self.model, booster),
+                ),
                 dtype="float64",
             )
         except Exception as exc:

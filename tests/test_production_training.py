@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 
 from fdshield_ml.common.preprocessing import preprocess_frame
+from fdshield_ml.common.xgboost_prediction import prediction_iteration_range
 from fdshield_ml.training import production
 
 RawFeaturesFactory = Callable[..., dict[str, object]]
@@ -51,8 +52,23 @@ def _install_fake_mlflow(
         lambda params: calls.__setitem__("params", params),
     )
     monkeypatch.setattr(production.mlflow, "log_metrics", lambda _: None)
-    monkeypatch.setattr(production.mlflow, "set_tags", lambda _: None)
-    monkeypatch.setattr(production.mlflow, "log_dict", lambda *_: None)
+    monkeypatch.setattr(
+        production.mlflow,
+        "set_tags",
+        lambda tags: calls.__setitem__("run_tags", tags),
+    )
+    monkeypatch.setattr(
+        production.mlflow,
+        "log_dict",
+        lambda value, path: calls.setdefault("dict_artifacts", {}).__setitem__(
+            path, value
+        ),
+    )
+    monkeypatch.setattr(
+        production.mlflow,
+        "log_text",
+        lambda *_: pytest.fail("Production training must not log text artifacts"),
+    )
 
     @contextmanager
     def fake_start_run(*, run_name: str):
@@ -60,6 +76,7 @@ def _install_fake_mlflow(
         yield SimpleNamespace(info=SimpleNamespace(run_id="run-123"))
 
     monkeypatch.setattr(production.mlflow, "start_run", fake_start_run)
+
     def fake_log_model(**kwargs: object) -> object:
         calls["model"] = kwargs["sk_model"]
         return SimpleNamespace(registered_model_version=17)
@@ -99,6 +116,22 @@ def test_train_registers_candidate_with_comparison_metadata(
     _training_frame(raw_features_factory).to_csv(source, index=False)
 
     calls = _install_fake_mlflow(monkeypatch)
+    prediction_ranges: list[tuple[int, int] | None] = []
+    original_predict_proba = production.XGBClassifier.predict_proba
+
+    def recording_predict_proba(
+        classifier: production.XGBClassifier,
+        features: object,
+        **kwargs: object,
+    ) -> object:
+        prediction_ranges.append(kwargs.get("iteration_range"))  # type: ignore[arg-type]
+        return original_predict_proba(classifier, features, **kwargs)
+
+    monkeypatch.setattr(
+        production.XGBClassifier,
+        "predict_proba",
+        recording_predict_proba,
+    )
 
     result = production.train_and_register_model(
         source,
@@ -139,6 +172,28 @@ def test_train_registers_candidate_with_comparison_metadata(
     assert calls["params"]["split_strategy"] == "time"
     assert calls["params"]["decision_threshold"] == result.metrics["decision_threshold"]
     assert calls["model"].decision_threshold_ == result.metrics["decision_threshold"]
+    expected_range = prediction_iteration_range(
+        calls["model"],
+        calls["model"].get_booster(),
+    )
+    assert prediction_ranges == [expected_range, expected_range]
+    assert set(calls["dict_artifacts"]) == {
+        "metadata/model-comparison.json",
+        "metadata/model-feature-schema.json",
+    }
+    comparison = calls["dict_artifacts"]["metadata/model-comparison.json"]
+    assert comparison["candidate"] == result.metrics
+    assert comparison["champion"] is None
+    assert comparison["recommendation"] == result.recommendation
+    assert calls["run_tags"] == {
+        "project": "fdshield",
+        "task": "binary_fraud_detection",
+        "pipeline_stage": "production_training",
+        "validation_status": "passed",
+        "promotion_recommendation": "REVIEW_REQUIRED",
+        "champion_model_version": "",
+    }
+    assert len(calls["tags"]) == 3
 
 
 def test_champion_evaluation_uses_registered_model_threshold_tag(
