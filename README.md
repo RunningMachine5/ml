@@ -821,13 +821,33 @@ docker run --rm `
 | `MODEL_MIN_PR_AUC` | `0.0` | API override | 후보 유효성 최소 PR-AUC |
 | `MODEL_MIN_RECALL` | `0.0` | API override | 후보 유효성 최소 Recall |
 | `BACKEND_TRAINING_RUN_ID` | 없음 | API override | Backend `training_runs.id` |
-| `CHAMPION_MODEL_VERSION` | 없음 | API override | Backend가 현재 운영 중이라고 기록한 정확한 비교 모델 버전 |
+| `CLOUD_RUN_EXECUTION` | 미지정 | Cloud Run 자동 주입 | 현재 Job execution 이름. 로컬에서는 설정하지 않음 |
 | `TRAINING_RESULT_CALLBACK_URL` | 없음 | Job 설정 | Backend 결과 callback URL 템플릿 |
 | `TRAINING_RESULT_CALLBACK_TOKEN` | 없음 | Secret | callback 관리자 토큰 |
 
+학습 Job의 Backend callback은 최신 `training_runs` 최소 스키마에 맞춰 다음 필드만
+전송합니다.
+
+```json
+{"status": "SUCCEEDED", "mlflow_run_id": "<run-id>", "cloud_run_execution_name": "<execution-name>"}
+```
+
+`cloud_run_execution_name`은 Cloud Run이 `CLOUD_RUN_EXECUTION`을 제공한 경우에만
+포함하며 로컬 실행에서는 생략합니다. 실패 시에는 `status=FAILED`, 운영 로그 확인을
+위한 짧은 `error_message`, 가능한 경우 같은 execution 이름을 보냅니다.
+Backend는 성공 상태와 `mlflow_run_id`만 영속화하며, 같은 payload의 재전송을 멱등하게
+처리합니다. Job은 네트워크 오류, `408`, `429`, `5xx`에 한해 동일 payload를 최대 세 번
+재시도하고 인증 오류나 상태 충돌 같은 다른 `4xx`는 즉시 실패합니다.
+
+모델 버전은 MLflow Registry에서 Run과 연결되고, 후보 지표는 Run metrics,
+후보·champion 비교는 `metadata/model-comparison.json`, 추천 결과는 Run/Model Version
+tag에 각각 남습니다. 현재 champion 비교 대상은 기본적으로 `MLFLOW_MODEL_ALIAS`로
+조회하며 Backend DB에 모델 버전이나 비교 결과를 중복 저장하지 않습니다. 이 결과는
+관리자 판단 보조일 뿐 자동 승격을 수행하지 않습니다.
+
 `stub://...` 값도 기존 인프라 실행 확인용으로 계속 지원하며 이 경우 MLflow Run은
 만들지 않습니다. `train` 모드는 Registry 버전과 검증 태그를 만들며 실행 로그의
-`training_model_registered` 이벤트에서 정확한 숫자 버전을 확인할 수 있습니다.
+`model_registered` 이벤트에서 정확한 숫자 버전을 확인할 수 있습니다.
 
 ### Training 이미지 Cloud Build
 
@@ -879,9 +899,10 @@ gcloud builds submit \
 그대로 승계합니다. 트래픽이 여러 리비전에 분산되어 있거나 운영 리비전이 정확한 숫자
 버전의 MLflow 모델을 사용하지 않으면 새 코드를 배포하지 않습니다.
 
-새 모델 버전은 Training Job이 MLflow Registry에 등록하며, MLflow가 발급한 정확한
-버전을 결과 Callback으로 Backend에 전달합니다. 이후 Backend DB 저장과 관리자 승인,
-0% 신규 리비전 및 smoke를 거친 경우에만 Cloud Run 모델 버전이 바뀝니다. 따라서
+새 모델 버전은 Training Job이 MLflow Registry에 등록하고 Backend에는 해당
+`mlflow_run_id`만 Callback으로 전달합니다. Backend는 Run에 연결된 Registry 버전을
+MLflow에서 조회합니다. 이후 관리자 승인, 0% 신규 리비전 및 smoke를 거친 경우에만
+Cloud Run 모델 버전이 바뀝니다. 따라서
 GitHub Actions는 Serving 코드 이미지만 교체하고 모델 승인 경로를 우회하지 않습니다.
 
 배포는 기존 Cloud Run 서비스의 `MLFLOW_TRACKING_URI`와 Secret Manager로 연결된
