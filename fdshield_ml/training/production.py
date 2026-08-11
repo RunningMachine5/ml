@@ -35,6 +35,7 @@ from fdshield_ml.common.preprocessing import (
     FeaturePreprocessingError,
     preprocess_frame,
 )
+from fdshield_ml.common.xgboost_prediction import prediction_iteration_range
 from fdshield_ml.training.dataset import (
     DEFAULT_MIN_FRAUD_ROWS_PER_SPLIT,
     DEFAULT_SPLIT_DATETIME,
@@ -332,8 +333,15 @@ def train_and_register_model(
         eval_set=[(X_validation, y_validation)],
         verbose=False,
     )
+    candidate_iteration_range = prediction_iteration_range(
+        classifier,
+        classifier.get_booster(),
+    )
     probability = pd.Series(
-        classifier.predict_proba(X_validation)[:, 1],
+        classifier.predict_proba(
+            X_validation,
+            iteration_range=candidate_iteration_range,
+        )[:, 1],
         index=y_validation.index,
     )
     decision_threshold = best_f1_threshold(
@@ -358,7 +366,6 @@ def train_and_register_model(
         champion_metrics,
         validation_passed=validation_passed,
     )
-
     mlflow.set_experiment(experiment_name)
     with mlflow.start_run(run_name="cloud-run-production-training") as run:
         mlflow.log_params(
@@ -413,7 +420,10 @@ def train_and_register_model(
             "metadata/model-feature-schema.json",
         )
         input_example = X_validation.head(5)
-        output_example = classifier.predict_proba(input_example)
+        output_example = classifier.predict_proba(
+            input_example,
+            iteration_range=candidate_iteration_range,
+        )
         model_info = mlflow.sklearn.log_model(
             sk_model=classifier,
             name="model",

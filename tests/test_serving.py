@@ -5,9 +5,13 @@ from collections.abc import Callable
 import numpy as np
 from fastapi.testclient import TestClient
 
-from fdshield_ml.common.feature_contract import MODEL_INPUT_COLUMNS
+from fdshield_ml.common.feature_contract import (
+    MODEL_FEATURE_COLUMNS,
+    MODEL_INPUT_COLUMNS,
+)
 from fdshield_ml.serving.app import create_app
 from fdshield_ml.serving.model_predictor import ModelPredictor
+from fdshield_ml.serving.schemas import PredictionRequest
 
 RawFeaturesFactory = Callable[..., dict[str, object]]
 
@@ -138,3 +142,54 @@ def test_predict_rejects_value_that_cannot_be_preprocessed(
 def test_current_model_contract_contains_54_raw_columns() -> None:
     assert len(MODEL_INPUT_COLUMNS) == 54
     assert len(MODEL_INPUT_COLUMNS) == len(set(MODEL_INPUT_COLUMNS))
+
+
+def test_xgboost_shap_uses_best_iteration_range(
+    raw_features_factory: RawFeaturesFactory,
+) -> None:
+    class RecordingBooster:
+        iteration_range: tuple[int, int] | None = None
+
+        def num_boosted_rounds(self) -> int:
+            return 8
+
+        def predict(
+            self,
+            matrix: object,
+            *,
+            pred_contribs: bool,
+            iteration_range: tuple[int, int],
+        ) -> np.ndarray:
+            assert pred_contribs is True
+            assert matrix.num_row() == 1  # type: ignore[attr-defined]
+            self.iteration_range = iteration_range
+            return np.zeros((1, len(MODEL_FEATURE_COLUMNS) + 1))
+
+    booster = RecordingBooster()
+
+    class EarlyStoppedModel:
+        decision_threshold_ = 0.5
+        best_iteration = 2
+
+        def predict_proba(self, features: object) -> np.ndarray:
+            return np.asarray([[0.7, 0.3]])
+
+        def get_booster(self) -> RecordingBooster:
+            return booster
+
+    predictor = ModelPredictor(
+        model=EarlyStoppedModel(),
+        model_name="candidate",
+        model_version="7",
+    )
+
+    result = predictor.predict(
+        PredictionRequest(
+            transaction_id="TX-BEST-ITERATION",
+            features=raw_features_factory(),
+        )
+    )
+
+    assert list(result.shap) == list(MODEL_FEATURE_COLUMNS)
+    assert len(result.shap) == 91
+    assert booster.iteration_range == (0, 3)
