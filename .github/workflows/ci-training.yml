@@ -8,6 +8,7 @@ on:
       - ".dockerignore"
       - "Dockerfile.training"
       - "cloudbuild.training.yaml"
+      - "deploy/validate_training_job_contract.py"
       - "pyproject.toml"
       - "uv.lock"
       - "fdshield_ml/__init__.py"
@@ -16,6 +17,7 @@ on:
       - "fdshield_ml/service/**"
       - "fdshield_ml/local_train.py"
       - "fdshield_ml/training_job.py"
+      - "tests/test_training_deploy_contract.py"
 
 permissions:
   contents: read
@@ -38,3 +40,23 @@ jobs:
             --file Dockerfile.training \
             --tag fdshield-ml-training:ci \
             .
+
+      - name: Smoke test Training image entrypoint
+        run: |
+          set +e
+          docker run --rm fdshield-ml-training:ci > training-entrypoint-smoke.log 2>&1
+          exit_code=$?
+          set -e
+
+          if [[ "$exit_code" -ne 2 ]]; then
+            echo "Training image entrypoint smoke returned $exit_code instead of 2."
+            sed -n '1,80p' training-entrypoint-smoke.log
+            exit 1
+          fi
+          if ! grep -Fq '"event": "training_job_configuration_error"' training-entrypoint-smoke.log; then
+            echo "Training image did not execute fdshield_ml.training_job."
+            sed -n '1,80p' training-entrypoint-smoke.log
+            exit 1
+          fi
+
+          echo "Training image entrypoint reached the expected configuration boundary."

@@ -9,6 +9,30 @@ steps:
       - ${_DEPLOY_IMAGE}
       - .
 
+  - id: smoke-training-entrypoint
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        set +e
+        docker run --rm "${_DEPLOY_IMAGE}" > /tmp/training-entrypoint-smoke.log 2>&1
+        exit_code=$$?
+        set -e
+
+        if [[ "$$exit_code" -ne 2 ]]; then
+          echo "Training image entrypoint smoke returned $$exit_code instead of 2."
+          sed -n '1,80p' /tmp/training-entrypoint-smoke.log
+          exit 1
+        fi
+        if ! grep -Fq '"event": "training_job_configuration_error"' /tmp/training-entrypoint-smoke.log; then
+          echo "Training image did not execute fdshield_ml.training_job."
+          sed -n '1,80p' /tmp/training-entrypoint-smoke.log
+          exit 1
+        fi
+
+        echo "Training image entrypoint reached the expected configuration boundary."
+
 images:
   - ${_DEPLOY_IMAGE}
 
