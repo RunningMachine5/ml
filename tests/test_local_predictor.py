@@ -46,6 +46,32 @@ def test_bundled_model80_predicts_with_real_shap(
     assert len(first.shap_values) == 56
 
 
+def test_bundled_model80_predicts_with_pr118_compatible_missing_values(
+    raw_features_factory: RawFeaturesFactory,
+) -> None:
+    service = load_local_predict_service(DEFAULT_LOCAL_MODEL_PATH)
+    request = PredictInputDTO.model_validate(
+        {
+            "transaction_id": "LOCAL-V2-PR118",
+            **raw_features_factory(
+                account_account_type="e",
+                account_initial_balance=None,
+                account_balance=None,
+                account_remaining_amount_daily_limit_exceeded=None,
+                access_medium=None,
+            ),
+        }
+    )
+
+    result = service.predict(request)
+
+    assert result.model_name == "fdshield-fraud-detector-v2"
+    assert result.model_version == "1"
+    assert result.predict_result == int(result.predict_proba >= 0.5)
+    assert 0.0 <= result.predict_proba <= 1.0
+    assert len(result.shap_values) == 56
+
+
 def test_local_model_manifest_matches_tracked_binary() -> None:
     manifest = json.loads(
         (DEFAULT_LOCAL_MODEL_PATH / "manifest.json").read_text(encoding="utf-8")

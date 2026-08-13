@@ -132,6 +132,57 @@ def test_optional_operating_system_is_encoded_as_all_zero(
     assert row[encoded_columns].sum() == 0
 
 
+def test_account_type_e_is_explicit_unseen_all_zero_category(
+    raw_features_factory: RawFeaturesFactory,
+) -> None:
+    row = preprocess_transaction_features(
+        raw_features_factory(account_account_type=" E ")
+    ).iloc[0]
+    encoded_columns = [
+        column
+        for column in MODEL_FEATURE_COLUMNS
+        if column.startswith("account_account_type_")
+    ]
+
+    assert encoded_columns == [
+        "account_account_type_a",
+        "account_account_type_b",
+        "account_account_type_c",
+        "account_account_type_d",
+    ]
+    assert row[encoded_columns].sum() == 0
+
+
+def test_optional_access_medium_is_encoded_as_all_zero(
+    raw_features_factory: RawFeaturesFactory,
+) -> None:
+    row = preprocess_transaction_features(
+        raw_features_factory(access_medium=None)
+    ).iloc[0]
+    encoded_columns = [
+        column
+        for column in MODEL_FEATURE_COLUMNS
+        if column.startswith("access_medium_")
+    ]
+
+    assert row[encoded_columns].sum() == 0
+
+
+def test_nullable_account_amounts_preserve_xgboost_missing_values(
+    raw_features_factory: RawFeaturesFactory,
+) -> None:
+    row = preprocess_transaction_features(
+        raw_features_factory(
+            account_initial_balance=None,
+            account_balance=None,
+            account_remaining_amount_daily_limit_exceeded=None,
+        )
+    ).iloc[0]
+
+    assert np.isnan(row["account_remaining_amount_daily_limit_exceeded"])
+    assert np.isnan(row["amount_to_balance_ratio"])
+
+
 def test_remaining_daily_limit_rejects_old_boolean_semantics(
     raw_features_factory: RawFeaturesFactory,
 ) -> None:
