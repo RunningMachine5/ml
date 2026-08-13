@@ -14,6 +14,7 @@ from fdshield_ml.infrastructure import mlflow as mlflow_integration
 from fdshield_ml.infrastructure import training_pipeline
 from fdshield_ml.service.train import model_training
 from fdshield_ml.service.train.dataset import TRAINING_DATA_CONTRACT
+from fdshield_ml.service.train.train_service import prepare_training_data
 from fdshield_ml.service.xgboost_prediction import prediction_iteration_range
 
 RawFeaturesFactory = Callable[..., dict[str, object]]
@@ -39,6 +40,65 @@ def _training_frame(raw_features_factory: RawFeaturesFactory) -> pd.DataFrame:
         )
         rows.append(row)
     return pd.DataFrame(rows).loc[:, RAW_TRAINING_INPUT_COLUMNS]
+
+
+def test_training_accepts_mixed_train1_and_backend_datetime_formats(
+    raw_features_factory: RawFeaturesFactory,
+) -> None:
+    rows: list[dict[str, object]] = []
+    for index, (transaction_datetime, is_fraud) in enumerate(
+        (("2025-01-01 1:02", 0), ("2025-01-02 01:02:03", 1)),
+        start=1,
+    ):
+        features = raw_features_factory(
+            customer_birth_date="1980-01-01",
+            customer_registration_datetime=(
+                "2012-12-04 4:41" if index == 1 else "2012-12-04 04:41:09"
+            ),
+            account_creation_datetime=(
+                "2017-11-13 0:52" if index == 1 else "2017-11-13 00:52:11"
+            ),
+            transaction_datetime=transaction_datetime,
+            last_atm_transaction_datetime=(
+                "2024-12-30 3:04" if index == 1 else "2024-12-30 03:04:05"
+            ),
+            last_bank_branch_transaction_datetime=None,
+            transaction_resumed_date=(
+                "2024-12-01 1:02" if index == 1 else "2024-12-01 01:02:03"
+            ),
+            account_account_type="e" if index == 2 else "a",
+            account_initial_balance=None if index == 2 else 10_000_000,
+            account_balance=None if index == 2 else 9_000_000,
+            account_remaining_amount_daily_limit_exceeded=(
+                None if index == 2 else 5_000_000
+            ),
+            access_medium=None if index == 2 else "a",
+        )
+        row = {
+            "transaction_id": f"MIXED-{index}",
+            **features,
+            "customer_identification_number": f"synthetic-{index}",
+            "customer_id": index,
+            "balance_drain_ratio": "" if index == 2 else 0.1,
+            "is_fraud": is_fraud,
+        }
+        row["flag_deposit_more_than_tenmillion"] = row.pop(
+            "flag_deposit_more_than_ten_million"
+        )
+        rows.append(row)
+
+    prepared = prepare_training_data(
+        pd.DataFrame(rows).loc[:, RAW_TRAINING_INPUT_COLUMNS]
+    )
+
+    assert prepared.features.shape == (2, 80)
+    assert prepared.features.loc[1, "account_account_type_a"] == 0
+    assert pd.isna(
+        prepared.features.loc[
+            1,
+            "account_remaining_amount_daily_limit_exceeded",
+        ]
+    )
 
 
 def _install_fake_mlflow(

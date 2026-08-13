@@ -197,6 +197,40 @@ def test_ml_predict_rejects_boolean_remaining_daily_limit(
     assert "must be an amount, not a boolean" in response.text
 
 
+def test_ml_predict_rejects_error_code_longer_than_eight_characters(
+    raw_features_factory: RawFeaturesFactory,
+) -> None:
+    response = _client().post(
+        "/ml/predict",
+        json={
+            "transaction_id": "TEST_LONG_ERROR",
+            **raw_features_factory(error_code="123456789"),
+        },
+    )
+
+    assert response.status_code == 422
+    assert "error_code" in response.text
+
+
+def test_ml_predict_normalizes_blank_optional_values(
+    raw_features_factory: RawFeaturesFactory,
+) -> None:
+    response = _client().post(
+        "/ml/predict",
+        json={
+            "transaction_id": "TEST_BLANK_OPTIONAL",
+            **raw_features_factory(
+                account_initial_balance="",
+                account_balance=" ",
+                account_remaining_amount_daily_limit_exceeded="",
+                access_medium=" ",
+            ),
+        },
+    )
+
+    assert response.status_code == 200, response.text
+
+
 def test_current_model_contract_contains_raw60_and_model80() -> None:
     assert len(MODEL_INPUT_COLUMNS) == len(set(MODEL_INPUT_COLUMNS)) == 59
     assert len(SERVING_INPUT_COLUMNS) == len(set(SERVING_INPUT_COLUMNS)) == 60

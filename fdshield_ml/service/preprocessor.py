@@ -23,11 +23,19 @@ from fdshield_ml.config.preprocess_config import (
     TRAINING_METADATA_COLUMNS,
     TRANSACTION_DATETIME_COLUMN,
     TRANSACTION_ID_COLUMN,
+    UNSEEN_CATEGORICAL_LEVELS,
 )
 
 TIME_DIFFERENCE_COLUMN = "time_difference"
 DISTANCE_COLUMN = "distance"
-OPTIONAL_CATEGORICAL_COLUMNS = frozenset({"operating_system"})
+OPTIONAL_CATEGORICAL_COLUMNS = frozenset({"access_medium", "operating_system"})
+OPTIONAL_NUMERIC_COLUMNS = frozenset(
+    {
+        "account_initial_balance",
+        "account_balance",
+        "account_remaining_amount_daily_limit_exceeded",
+    }
+)
 _DURATION_PATTERN = re.compile(
     r"^\s*(?:(?P<days>[+-]?\d+)\s+days?\s+)?"
     r"(?P<hours>\d{1,2}):(?P<minutes>\d{2}):(?P<seconds>\d{2}(?:\.\d+)?)\s*$",
@@ -120,7 +128,12 @@ def preprocess_frame(source_frame: pd.DataFrame) -> pd.DataFrame:
     result = pd.DataFrame(index=source.index)
     for column in NUMERIC_PASSTHROUGH_COLUMNS:
         reject_boolean = column == "account_remaining_amount_daily_limit_exceeded"
-        result[column] = _required_numeric(
+        numeric_parser = (
+            _optional_numeric
+            if column in OPTIONAL_NUMERIC_COLUMNS
+            else _required_numeric
+        )
+        result[column] = numeric_parser(
             source[column], column, reject_boolean=reject_boolean
         )
 
@@ -183,9 +196,12 @@ def preprocess_frame(source_frame: pd.DataFrame) -> pd.DataFrame:
     transaction_amount = _required_numeric(
         source["transaction_amount"], "transaction_amount"
     )
-    initial_balance = _required_numeric(
+    initial_balance = _optional_numeric(
         source["account_initial_balance"], "account_initial_balance"
     )
+    # account_balance는 현재 model80에 직접 투영되지 않지만 raw 계약의 숫자
+    # 의미는 검증한다. null은 모델 계약상 missing으로 허용한다.
+    _optional_numeric(source["account_balance"], "account_balance")
     daily_limit = _required_numeric(
         source["account_amount_daily_limit"], "account_amount_daily_limit"
     )
@@ -266,7 +282,8 @@ def _normalize_and_validate_categories(source: pd.DataFrame) -> None:
         normalized = normalized.mask(normalized.eq(""), pd.NA)
         if column not in OPTIONAL_CATEGORICAL_COLUMNS and normalized.isna().any():
             raise FeaturePreprocessingError(f"{column} must not be empty")
-        unknown = sorted(set(normalized.dropna().unique()) - set(levels), key=str)
+        allowed_levels = set(levels) | set(UNSEEN_CATEGORICAL_LEVELS.get(column, ()))
+        unknown = sorted(set(normalized.dropna().unique()) - allowed_levels, key=str)
         if unknown:
             raise FeaturePreprocessingError(
                 f"{column} contains unknown levels: {unknown}"
@@ -299,9 +316,37 @@ def _required_numeric(
     return numeric.astype("float64")
 
 
+def _optional_numeric(
+    series: pd.Series,
+    column: str,
+    *,
+    reject_boolean: bool = False,
+) -> pd.Series:
+    """유한 숫자는 유지하고 null은 XGBoost missing인 NaN으로 보존한다."""
+
+    if (
+        reject_boolean
+        and series.map(lambda value: isinstance(value, (bool, np.bool_))).any()
+    ):
+        raise FeaturePreprocessingError(
+            f"{column} must contain an amount, not a boolean"
+        )
+    try:
+        numeric = pd.to_numeric(series, errors="raise").astype("float64")
+    except (TypeError, ValueError) as exc:
+        raise FeaturePreprocessingError(
+            f"{column} contains a non-numeric value"
+        ) from exc
+    if np.isinf(numeric.to_numpy(copy=False)).any():
+        raise FeaturePreprocessingError(f"{column} must contain finite numbers or null")
+    return numeric
+
+
 def _parse_datetime(series: pd.Series, column: str, *, required: bool) -> pd.Series:
     try:
-        parsed = pd.to_datetime(series, errors="raise")
+        # 기존 train1의 분 단위 문자열과 Backend가 append하는 초 단위 문자열이
+        # 같은 DatasetVersion에 공존하므로 행마다 포맷을 추론한다.
+        parsed = pd.to_datetime(series, errors="raise", format="mixed")
     except (TypeError, ValueError) as exc:
         raise FeaturePreprocessingError(
             f"{column} contains an invalid datetime value"

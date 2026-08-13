@@ -133,6 +133,12 @@ CATEGORICAL_LEVELS = {
     "access_medium": ("a", "b", "c", "d", "e", "f", "g", "h"),
 }
 
+# 입력 계약에는 포함되지만 현재 model80에 대응하는 One-hot 열이 없는 값이다.
+# 모델 Feature를 추가하거나 재학습하지 않고 모든 기존 One-hot을 0으로 둔다.
+UNSEEN_CATEGORICAL_LEVELS = {
+    "account_account_type": ("e",),
+}
+
 TRANSACTION_DATETIME_COLUMN = "transaction_datetime"
 REQUIRED_ELAPSED_COLUMNS = {
     "customer_registration_datetime": "days_since_registration",
@@ -303,4 +309,5 @@ __all__ = [
     "TRAINING_METADATA_COLUMNS",
     "TRANSACTION_DATETIME_COLUMN",
     "TRANSACTION_ID_COLUMN",
+    "UNSEEN_CATEGORICAL_LEVELS",
 ]
