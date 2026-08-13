@@ -1,4 +1,4 @@
-"""Git에 포함된 운영 v5 모델 번들의 로딩·예측 계약 테스트."""
+"""Git에 포함된 운영 model80 번들의 로딩·예측 계약 테스트."""
 
 from __future__ import annotations
 
@@ -9,37 +9,41 @@ from pathlib import Path
 
 import pytest
 
-from fdshield_ml.common.feature_contract import MODEL_FEATURE_COLUMNS
-from fdshield_ml.serving.local_predictor import (
+from fdshield_ml.serving.dto.predict_input import PredictInputDTO
+from fdshield_ml.serving.integrations import predict_service_from_environment
+from fdshield_ml.serving.integrations.local_model import (
     DEFAULT_LOCAL_MODEL_PATH,
-    LocalModelPredictor,
+    load_local_predict_service,
+    load_local_predict_service_from_environment,
 )
-from fdshield_ml.serving.model_predictor import ModelServingError
-from fdshield_ml.serving.predictor import predictor_from_environment
-from fdshield_ml.serving.schemas import PredictionRequest
+from fdshield_ml.serving.service.predict.predict_service import (
+    PredictionServiceError,
+    PredictService,
+)
 
 RawFeaturesFactory = Callable[..., dict[str, object]]
 
 
-def test_bundled_v5_model_predicts_with_real_shap(
+def test_bundled_model80_predicts_with_real_shap(
     raw_features_factory: RawFeaturesFactory,
 ) -> None:
-    predictor = LocalModelPredictor.from_bundle(DEFAULT_LOCAL_MODEL_PATH)
-    request = PredictionRequest(
-        transaction_id="LOCAL-V5-001",
-        features=raw_features_factory(),
+    service = load_local_predict_service(DEFAULT_LOCAL_MODEL_PATH)
+    request = PredictInputDTO.model_validate(
+        {
+            "transaction_id": "LOCAL-V2-001",
+            **raw_features_factory(),
+        }
     )
 
-    first = predictor.predict(request)
-    second = predictor.predict(request)
+    first = service.predict(request)
+    second = service.predict(request)
 
     assert first == second
-    assert first.model_name == "fdshield-fraud-detector"
-    assert first.model_version == "5"
-    assert first.is_fraud is (first.fraud_probability >= 0.55)
-    assert 0.0 <= first.fraud_probability <= 1.0
-    assert list(first.shap) == list(MODEL_FEATURE_COLUMNS)
-    assert len(first.shap) == 91
+    assert first.model_name == "fdshield-fraud-detector-v2"
+    assert first.model_version == "1"
+    assert first.predict_result == int(first.predict_proba >= 0.5)
+    assert 0.0 <= first.predict_proba <= 1.0
+    assert len(first.shap_values) == 56
 
 
 def test_local_model_manifest_matches_tracked_binary() -> None:
@@ -51,9 +55,10 @@ def test_local_model_manifest_matches_tracked_binary() -> None:
     actual_sha256 = hashlib.sha256(model_bytes).hexdigest()
 
     assert actual_sha256 == manifest["model_sha256"]
-    assert manifest["model_version"] == "5"
-    assert manifest["decision_threshold"] == pytest.approx(0.55)
-    assert manifest["feature_count"] == 91
+    assert manifest["model_version"] == "1"
+    assert manifest["decision_threshold"] == pytest.approx(0.5)
+    assert manifest["feature_count"] == 80
+    assert manifest["feature_contract_version"] == "raw60-model80-v1"
 
 
 def test_local_model_metadata_cannot_be_overridden_by_environment(
@@ -63,29 +68,29 @@ def test_local_model_metadata_cannot_be_overridden_by_environment(
     monkeypatch.setenv("ML_MODEL_NAME", "not-the-bundled-model")
     monkeypatch.setenv("ML_MODEL_VERSION", "999")
 
-    predictor = LocalModelPredictor.from_environment()
+    service = load_local_predict_service_from_environment()
 
-    assert predictor.model_name == "fdshield-fraud-detector"
-    assert predictor.model_version == "5"
-    assert predictor.threshold == pytest.approx(0.55)
+    assert service.model_name == "fdshield-fraud-detector-v2"
+    assert service.model_version == "1"
+    assert service.threshold == pytest.approx(0.5)
 
 
 def test_local_model_rejects_hash_mismatch(tmp_path: Path) -> None:
     manifest = {
         "bundle_schema_version": 1,
-        "model_name": "fdshield-fraud-detector",
-        "model_version": "5",
-        "model_format": "xgboost-ubj",
-        "model_file": "model.ubj",
+        "model_name": "fdshield-fraud-detector-v2",
+        "model_version": "1",
+        "model_format": "xgboost-json",
+        "model_file": "model.json",
         "model_sha256": "0" * 64,
-        "feature_count": 91,
-        "decision_threshold": 0.55,
+        "feature_count": 80,
+        "decision_threshold": 0.5,
     }
     (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    (tmp_path / "model.ubj").write_bytes(b"not-the-tracked-model")
+    (tmp_path / "model.json").write_bytes(b"not-the-tracked-model")
 
-    with pytest.raises(ModelServingError, match="SHA-256 mismatch"):
-        LocalModelPredictor.from_bundle(tmp_path)
+    with pytest.raises(PredictionServiceError, match="SHA-256 mismatch"):
+        load_local_predict_service(tmp_path)
 
 
 def test_predictor_factory_defaults_to_local_model(
@@ -93,10 +98,10 @@ def test_predictor_factory_defaults_to_local_model(
 ) -> None:
     monkeypatch.delenv("ML_PREDICTOR_MODE", raising=False)
 
-    predictor = predictor_from_environment()
+    service = predict_service_from_environment()
 
-    assert isinstance(predictor, LocalModelPredictor)
-    assert predictor.model_version == "5"
+    assert isinstance(service, PredictService)
+    assert service.model_version == "1"
 
 
 def test_predictor_factory_rejects_removed_stub_mode(
@@ -105,4 +110,4 @@ def test_predictor_factory_rejects_removed_stub_mode(
     monkeypatch.setenv("ML_PREDICTOR_MODE", "stub")
 
     with pytest.raises(ValueError, match="local.*mlflow"):
-        predictor_from_environment()
+        predict_service_from_environment()

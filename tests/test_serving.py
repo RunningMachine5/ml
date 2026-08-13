@@ -1,35 +1,42 @@
-"""모델 Serving HTTP 계약 테스트."""
+"""정식 raw60 -> model80 Serving HTTP 계약 테스트."""
 
 from collections.abc import Callable
 
 import numpy as np
+import pytest
 from fastapi.testclient import TestClient
 
-from fdshield_ml.common.feature_contract import (
+from fdshield_ml.common.preprocess_config import (
     MODEL_FEATURE_COLUMNS,
     MODEL_INPUT_COLUMNS,
+    SERVING_INPUT_COLUMNS,
 )
+from fdshield_ml.serving import app as serving_app
 from fdshield_ml.serving.app import create_app
-from fdshield_ml.serving.model_predictor import ModelPredictor
-from fdshield_ml.serving.schemas import PredictionRequest
+from fdshield_ml.serving.dto.predict_input import PredictInputDTO
+from fdshield_ml.serving.service.predict.predict_service import (
+    PredictionServiceError,
+    PredictService,
+)
 
 RawFeaturesFactory = Callable[..., dict[str, object]]
 
 
 class FakeProbabilityModel:
-    """HTTP 요청 검증에서 외부 모델 로딩만 격리하는 테스트 대역."""
+    """HTTP 계약에서 외부 모델 로딩만 격리하는 model80 테스트 대역."""
 
     decision_threshold_ = 0.5
 
     def predict_proba(self, features: object) -> np.ndarray:
-        assert features.shape == (1, 91)
+        assert features.shape == (1, 80)
+        assert list(features.columns) == list(MODEL_FEATURE_COLUMNS)
         return np.asarray([[0.2, 0.8]])
 
 
 def _client() -> TestClient:
     return TestClient(
         create_app(
-            ModelPredictor(
+            PredictService(
                 model=FakeProbabilityModel(),
                 model_name="test-model",
                 model_version="1",
@@ -45,60 +52,98 @@ def test_health_and_readiness() -> None:
     assert client.get("/ready").json() == {"status": "ready"}
 
 
-def test_predict_returns_model_contract(
+def test_lifespan_loads_model_service_before_readiness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = PredictService(
+        model=FakeProbabilityModel(),
+        model_name="startup-model",
+        model_version="1",
+    )
+    monkeypatch.setattr(
+        serving_app,
+        "predict_service_from_environment",
+        lambda: service,
+    )
+
+    with TestClient(create_app()) as client:
+        assert client.get("/ready").json() == {"status": "ready"}
+        assert client.app.state.predict_service is service
+
+
+def test_lifespan_fails_fast_when_model_loading_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_to_load() -> PredictService:
+        raise PredictionServiceError("model load failed")
+
+    monkeypatch.setattr(
+        serving_app,
+        "predict_service_from_environment",
+        fail_to_load,
+    )
+
+    with (
+        pytest.raises(PredictionServiceError, match="model load failed"),
+        TestClient(create_app()),
+    ):
+        pass
+
+
+def test_transition_predict_endpoint_is_removed() -> None:
+    response = _client().post("/predict", json={})
+
+    assert response.status_code == 404
+
+
+def test_ml_predict_returns_official_flat_contract(
     raw_features_factory: RawFeaturesFactory,
 ) -> None:
-    client = _client()
-
-    response = client.post(
-        "/predict",
-        json={
-            "transaction_id": "TEST_000001",
-            "features": raw_features_factory(),
-        },
+    response = _client().post(
+        "/ml/predict",
+        json={"transaction_id": 1001, **raw_features_factory()},
     )
 
     assert response.status_code == 200
     assert response.json() == {
-        "transaction_id": "TEST_000001",
-        "is_fraud": True,
-        "fraud_probability": 0.8,
-        "shap": {},
+        "transaction_id": "1001",
+        "predict_result": 1,
+        "predict_proba": 0.8,
+        "shap_values": {},
         "model_name": "test-model",
         "model_version": "1",
     }
 
 
-def test_predict_rejects_missing_feature_container() -> None:
-    response = _client().post("/predict", json={"transaction_id": "TEST_000001"})
+def test_ml_predict_rejects_missing_features() -> None:
+    response = _client().post("/ml/predict", json={"transaction_id": "TEST_000001"})
 
     assert response.status_code == 422
 
 
-def test_predict_rejects_partial_transaction_features(
+def test_ml_predict_rejects_partial_transaction_features(
     raw_features_factory: RawFeaturesFactory,
 ) -> None:
-    client = _client()
     features = raw_features_factory()
-    del features["Location"]
+    del features["location"]
 
-    response = client.post(
-        "/predict",
-        json={"transaction_id": "TEST_000001", "features": features},
+    response = _client().post(
+        "/ml/predict",
+        json={"transaction_id": "TEST_000001", **features},
     )
 
     assert response.status_code == 422
-    assert "Location" in response.text
+    assert "location" in response.text
 
 
-def test_predict_rejects_unknown_features(
+def test_ml_predict_rejects_unknown_features(
     raw_features_factory: RawFeaturesFactory,
 ) -> None:
     response = _client().post(
-        "/predict",
+        "/ml/predict",
         json={
             "transaction_id": "TEST_DRAFT_001",
-            "features": raw_features_factory(new_transaction_field="draft-value"),
+            **raw_features_factory(new_transaction_field="draft-value"),
         },
     )
 
@@ -106,42 +151,56 @@ def test_predict_rejects_unknown_features(
     assert "new_transaction_field" in response.text
 
 
-def test_predict_rejects_training_label_and_identifiers(
+def test_ml_predict_rejects_training_label_and_identifiers(
     raw_features_factory: RawFeaturesFactory,
 ) -> None:
     response = _client().post(
-        "/predict",
+        "/ml/predict",
         json={
             "transaction_id": "TEST_000001",
-            "features": raw_features_factory(Is_Fraud=1, ID="TEST_000001"),
+            **raw_features_factory(is_fraud=1, customer_id=123),
         },
     )
 
     assert response.status_code == 422
-    assert "Is_Fraud" in response.text
-    assert "ID" in response.text
+    assert "is_fraud" in response.text
+    assert "customer_id" in response.text
 
 
-def test_predict_rejects_value_that_cannot_be_preprocessed(
+def test_ml_predict_rejects_invalid_duration(
     raw_features_factory: RawFeaturesFactory,
 ) -> None:
     response = _client().post(
-        "/predict",
+        "/ml/predict",
         json={
-            "transaction_id": "TEST_BAD_LOCATION",
-            "features": raw_features_factory(
-                Location="전북특별자치도 남원시 도통동 99.0 127.0"
-            ),
+            "transaction_id": "TEST_BAD_TIME",
+            **raw_features_factory(time_difference="not-a-duration"),
         },
     )
 
     assert response.status_code == 422
-    assert response.json()["detail"] == "location_latitude must be in [33, 39]"
+    assert "time_difference" in response.text
 
 
-def test_current_model_contract_contains_54_raw_columns() -> None:
-    assert len(MODEL_INPUT_COLUMNS) == 54
-    assert len(MODEL_INPUT_COLUMNS) == len(set(MODEL_INPUT_COLUMNS))
+def test_ml_predict_rejects_boolean_remaining_daily_limit(
+    raw_features_factory: RawFeaturesFactory,
+) -> None:
+    response = _client().post(
+        "/ml/predict",
+        json={
+            "transaction_id": "TEST_BOOLEAN_LIMIT",
+            **raw_features_factory(account_remaining_amount_daily_limit_exceeded=False),
+        },
+    )
+
+    assert response.status_code == 422
+    assert "must be an amount, not a boolean" in response.text
+
+
+def test_current_model_contract_contains_raw60_and_model80() -> None:
+    assert len(MODEL_INPUT_COLUMNS) == len(set(MODEL_INPUT_COLUMNS)) == 59
+    assert len(SERVING_INPUT_COLUMNS) == len(set(SERVING_INPUT_COLUMNS)) == 60
+    assert len(MODEL_FEATURE_COLUMNS) == len(set(MODEL_FEATURE_COLUMNS)) == 80
 
 
 def test_xgboost_shap_uses_best_iteration_range(
@@ -163,7 +222,10 @@ def test_xgboost_shap_uses_best_iteration_range(
             assert pred_contribs is True
             assert matrix.num_row() == 1  # type: ignore[attr-defined]
             self.iteration_range = iteration_range
-            return np.zeros((1, len(MODEL_FEATURE_COLUMNS) + 1))
+            return np.arange(
+                len(MODEL_FEATURE_COLUMNS) + 1,
+                dtype="float64",
+            ).reshape(1, -1)
 
     booster = RecordingBooster()
 
@@ -177,19 +239,25 @@ def test_xgboost_shap_uses_best_iteration_range(
         def get_booster(self) -> RecordingBooster:
             return booster
 
-    predictor = ModelPredictor(
+    service = PredictService(
         model=EarlyStoppedModel(),
         model_name="candidate",
         model_version="7",
     )
 
-    result = predictor.predict(
-        PredictionRequest(
-            transaction_id="TX-BEST-ITERATION",
-            features=raw_features_factory(),
+    result = service.predict(
+        PredictInputDTO.model_validate(
+            {
+                "transaction_id": "TX-BEST-ITERATION",
+                **raw_features_factory(),
+            }
         )
     )
 
-    assert list(result.shap) == list(MODEL_FEATURE_COLUMNS)
-    assert len(result.shap) == 91
+    assert len(result.shap_values) == 56
+    assert result.shap_values["customer_age"] == 0.0
+    assert result.shap_values["time_difference"] == 22.0
+    assert result.shap_values["distance"] == 23.0
+    assert result.shap_values["customer_gender"] == 99.0
+    assert result.shap_values["access_medium"] == sum(map(float, range(72, 80)))
     assert booster.iteration_range == (0, 3)
