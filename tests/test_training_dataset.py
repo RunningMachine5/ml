@@ -1,172 +1,124 @@
-"""운영 학습 CSV의 raw/preprocessed 계약과 시간 분할 테스트."""
+"""train1.csv 전용 raw64 학습 계약 테스트."""
 
 from collections.abc import Callable
 
-import numpy as np
 import pandas as pd
 import pytest
 
-from fdshield_ml.common.feature_contract import MODEL_FEATURE_COLUMNS
-from fdshield_ml.common.preprocessing import preprocess_frame
-from fdshield_ml.training.dataset import (
-    TrainingDatasetError,
-    aligned_transaction_datetimes,
-    detect_training_dataset_kind,
-    time_split_indices,
-    validate_binary_target,
-    validate_preprocessed_features,
+from fdshield_ml.common.preprocess_config import (
+    RAW_TRAINING_INPUT_COLUMNS,
+    TRAINING_INPUT_COLUMNS,
 )
-
+from fdshield_ml.training.dataset import (
+    LABEL_COLUMN,
+    TRAINING_DATA_CONTRACT,
+    TrainingDatasetError,
+    detect_training_dataset_kind,
+    normalize_training_frame,
+    validate_binary_target,
+    validate_transaction_ids,
+)
 
 RawFeaturesFactory = Callable[..., dict[str, object]]
 
 
-def _preprocessed_frame(
+def _training_frame(
     raw_features_factory: RawFeaturesFactory,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    datetimes = [
-        "2026-03-30 10:00:00",
-        "2026-03-31 11:00:00",
-        "2026-04-01 12:00:00",
-        "2026-04-02 13:00:00",
-    ]
-    labels = [0, 1, 0, 1]
-    raw = pd.DataFrame(
-        [
-            raw_features_factory(Transaction_Datetime=value)
-            for value in datetimes
-        ]
-    )
-    training = preprocess_frame(raw)
-    training["Is_Fraud"] = labels
-    transactions = pd.DataFrame(
-        {
-            "Transaction_Datetime": datetimes,
-            "Is_Fraud": labels,
+    *,
+    labels: list[object] | None = None,
+) -> pd.DataFrame:
+    target = labels or [0, 1, 0, 1]
+    rows: list[dict[str, object]] = []
+    for index, label in enumerate(target, start=1):
+        row = {
+            "transaction_id": f"TX-{index}",
+            **raw_features_factory(),
+            "customer_identification_number": f"synthetic-{index}",
+            "customer_id": index,
+            "balance_drain_ratio": 0.1,
+            LABEL_COLUMN: label,
         }
-    )
-    return training, transactions
+        row["flag_deposit_more_than_tenmillion"] = row.pop(
+            "flag_deposit_more_than_ten_million"
+        )
+        rows.append(row)
+    return pd.DataFrame(rows).loc[:, RAW_TRAINING_INPUT_COLUMNS]
 
 
-def test_exact_preprocessed_contract_is_numeric_and_ordered(
+def test_train1_alias_contract_normalizes_to_canonical_raw64_order(
     raw_features_factory: RawFeaturesFactory,
 ) -> None:
-    training, _ = _preprocessed_frame(raw_features_factory)
+    source = _training_frame(raw_features_factory)
 
-    assert detect_training_dataset_kind(training.columns) == "preprocessed"
-    features = validate_preprocessed_features(training)
+    assert detect_training_dataset_kind(source.columns) == "raw"
+    normalized = normalize_training_frame(source)
 
-    assert features.columns.tolist() == list(MODEL_FEATURE_COLUMNS)
-    assert np.isfinite(features.to_numpy(dtype="float64")).all()
+    assert normalized.columns.tolist() == list(TRAINING_INPUT_COLUMNS)
+    assert len(normalized.columns) == 64
+    assert "flag_deposit_more_than_tenmillion" not in normalized
+    assert "flag_deposit_more_than_ten_million" in normalized
+    assert TRAINING_DATA_CONTRACT == "fdshield-train1-raw64-to-model80-v1"
 
 
 @pytest.mark.parametrize("mutation", ["missing", "extra", "order"])
-def test_preprocessed_contract_rejects_schema_drift(
+def test_train1_contract_rejects_schema_drift(
     raw_features_factory: RawFeaturesFactory,
     mutation: str,
 ) -> None:
-    training, _ = _preprocessed_frame(raw_features_factory)
+    source = _training_frame(raw_features_factory)
     if mutation == "missing":
-        training = training.drop(columns=MODEL_FEATURE_COLUMNS[0])
+        source = source.drop(columns=source.columns[0])
     elif mutation == "extra":
-        training["unexpected"] = 0
+        source["unexpected"] = 0
     else:
-        columns = training.columns.tolist()
+        columns = source.columns.tolist()
         columns[0], columns[1] = columns[1], columns[0]
-        training = training.loc[:, columns]
+        source = source.loc[:, columns]
 
     with pytest.raises(TrainingDatasetError):
-        detect_training_dataset_kind(training.columns)
+        detect_training_dataset_kind(source.columns)
 
 
-@pytest.mark.parametrize("invalid_value", ["not-a-number", float("inf")])
-def test_preprocessed_contract_rejects_invalid_numeric_values(
+@pytest.mark.parametrize("invalid_value", [0.5, "fraud", float("inf")])
+def test_binary_label_rejects_non_binary_value(
     raw_features_factory: RawFeaturesFactory,
     invalid_value: object,
 ) -> None:
-    training, _ = _preprocessed_frame(raw_features_factory)
-    training[MODEL_FEATURE_COLUMNS[0]] = training[
-        MODEL_FEATURE_COLUMNS[0]
-    ].astype("object" if isinstance(invalid_value, str) else "float64")
-    training.loc[0, MODEL_FEATURE_COLUMNS[0]] = invalid_value
-
-    with pytest.raises(TrainingDatasetError, match="numeric|finite"):
-        validate_preprocessed_features(training)
-
-
-def test_binary_label_rejects_fractional_value(
-    raw_features_factory: RawFeaturesFactory,
-) -> None:
-    training, _ = _preprocessed_frame(raw_features_factory)
-    training["Is_Fraud"] = training["Is_Fraud"].astype("float64")
-    training.loc[0, "Is_Fraud"] = 0.5
-
-    with pytest.raises(TrainingDatasetError, match="both 0 and 1"):
-        validate_binary_target(training, context="training")
-
-
-def test_generated_raw_metadata_columns_are_allowed(
-    raw_features_factory: RawFeaturesFactory,
-) -> None:
-    row = {
-        "ID": "T00000001",
-        **raw_features_factory(),
-        "Customer_ID": "C000001",
-        "Customer_personal_identifier": "홍길동",
-        "Customer_identification_number": "masked",
-        "Account_account_number": "account-1",
-        "IP_Address": "127.0.0.1",
-        "MAC_Address": "00:00:00:00:00:00",
-        "Recipient_Account_Number": "recipient-1",
-        "Is_Fraud": 0,
-    }
-
-    assert detect_training_dataset_kind(pd.DataFrame([row]).columns) == "raw"
-
-    row["unknown_raw_column"] = 1
-    with pytest.raises(TrainingDatasetError, match="unknown_raw_column"):
-        detect_training_dataset_kind(pd.DataFrame([row]).columns)
-
-
-def test_companion_alignment_and_time_split_use_row_positions(
-    raw_features_factory: RawFeaturesFactory,
-) -> None:
-    training, transactions = _preprocessed_frame(raw_features_factory)
-    target = validate_binary_target(training, context="training")
-    datetimes = aligned_transaction_datetimes(training, transactions)
-
-    split = time_split_indices(
-        datetimes,
-        target,
-        minimum_fraud_rows=1,
+    source = normalize_training_frame(
+        _training_frame(raw_features_factory, labels=[0, 1, invalid_value])
     )
 
-    assert split.train_index.tolist() == [0, 1]
-    assert split.validation_index.tolist() == [2, 3]
-    assert split.train_datetime_max < split.validation_datetime_min
+    with pytest.raises(TrainingDatasetError, match="0 or 1"):
+        validate_binary_target(source, context="training")
 
 
-def test_companion_alignment_rejects_label_or_datetime_mismatch(
+def test_binary_label_requires_both_classes(
     raw_features_factory: RawFeaturesFactory,
 ) -> None:
-    training, transactions = _preprocessed_frame(raw_features_factory)
-    transactions.loc[0, "Is_Fraud"] = 1
+    source = normalize_training_frame(
+        _training_frame(raw_features_factory, labels=[1, 1])
+    )
 
-    with pytest.raises(TrainingDatasetError, match="Is_Fraud differs"):
-        aligned_transaction_datetimes(training, transactions)
-
-    training, transactions = _preprocessed_frame(raw_features_factory)
-    transactions.loc[0, "Transaction_Datetime"] = "2026-03-30 15:00:00"
-    with pytest.raises(TrainingDatasetError, match="transaction_hour"):
-        aligned_transaction_datetimes(training, transactions)
+    with pytest.raises(TrainingDatasetError, match="both 0 and 1"):
+        validate_binary_target(source, context="training")
 
 
-def test_time_split_requires_minimum_fraud_rows_on_both_sides(
+def test_transaction_ids_must_be_present_and_unique(
     raw_features_factory: RawFeaturesFactory,
 ) -> None:
-    training, transactions = _preprocessed_frame(raw_features_factory)
-    target = validate_binary_target(training, context="training")
-    datetimes = aligned_transaction_datetimes(training, transactions)
+    source = normalize_training_frame(_training_frame(raw_features_factory))
+    source.loc[0, "transaction_id"] = ""
+    with pytest.raises(TrainingDatasetError, match="must not be empty"):
+        validate_transaction_ids(source, context="training")
 
-    with pytest.raises(TrainingDatasetError, match="at least 100 fraud rows"):
-        time_split_indices(datetimes, target)
+    source = normalize_training_frame(_training_frame(raw_features_factory))
+    source.loc[1, "transaction_id"] = source.loc[0, "transaction_id"]
+    with pytest.raises(TrainingDatasetError, match="must be unique"):
+        validate_transaction_ids(source, context="training")
+
+
+def test_legacy_model80_plus_label_csv_is_not_a_training_contract() -> None:
+    legacy_columns = [f"feature_{index}" for index in range(80)] + ["Is_Fraud"]
+
+    with pytest.raises(TrainingDatasetError, match="raw64"):
+        detect_training_dataset_kind(legacy_columns)
