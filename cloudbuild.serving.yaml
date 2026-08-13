@@ -58,7 +58,7 @@ steps:
         with open("/tmp/smoke-request.json", encoding="utf-8") as request_file:
             payload = json.dumps(json.load(request_file)).encode("utf-8")
         request = urllib.request.Request(
-            "http://127.0.0.1:8080/predict",
+            "http://127.0.0.1:8080/ml/predict",
             data=payload,
             headers={"Content-Type": "application/json"},
             method="POST",
@@ -69,7 +69,14 @@ steps:
             raise SystemExit("Smoke prediction returned a different model name")
         if prediction.get("model_version") != expected_version:
             raise SystemExit("Smoke prediction returned a different model version")
-        print("Serving image loaded the exact MLflow model and passed /predict.")
+        if prediction.get("predict_result") not in (0, 1):
+            raise SystemExit("Smoke prediction returned an invalid predict_result")
+        probability = prediction.get("predict_proba")
+        if not isinstance(probability, (int, float)) or not 0 <= probability <= 1:
+            raise SystemExit("Smoke prediction returned an invalid predict_proba")
+        if len(prediction.get("shap_values", {})) != 56:
+            raise SystemExit("Smoke prediction did not return 56 grouped SHAP values")
+        print("Serving image loaded the exact MLflow model and passed /ml/predict.")
         PY
 
 availableSecrets:

@@ -16,10 +16,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 RUN useradd --create-home --uid 10001 appuser
 
-COPY --chown=appuser:appuser \
-    fdshield_ml/__init__.py \
-    fdshield_ml/features.py \
-    ./fdshield_ml/
+COPY --chown=appuser:appuser fdshield_ml/__init__.py ./fdshield_ml/
 COPY --chown=appuser:appuser fdshield_ml/common ./fdshield_ml/common
 COPY --chown=appuser:appuser fdshield_ml/training ./fdshield_ml/training
 

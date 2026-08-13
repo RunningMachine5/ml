@@ -11,7 +11,6 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - "fdshield_ml/__init__.py"
-      - "fdshield_ml/features.py"
       - "fdshield_ml/common/**"
       - "fdshield_ml/training/**"
   workflow_dispatch:
@@ -29,6 +28,8 @@ env:
   GCP_REGION: asia-northeast3
   CLOUD_RUN_JOB: fdshield-binary-training
   IMAGE_NAME: asia-northeast3-docker.pkg.dev/project-4cc3406c-72d8-4907-a5d/fdshield/ml-training
+  TRAINING_DATA_URI: ${{ vars.TRAINING_DATA_URI }}
+  REGISTERED_MODEL_NAME: fdshield-fraud-detector-v2
 
 jobs:
   test-build-deploy:
@@ -131,11 +132,16 @@ jobs:
 
       - name: Update Cloud Run Training Job image
         run: |
+          if [[ "$TRAINING_DATA_URI" != gs://*/*.csv ]]; then
+            echo "::error::Repository variable TRAINING_DATA_URI must be a gs:// CSV URI."
+            exit 1
+          fi
           gcloud run jobs update "$CLOUD_RUN_JOB" \
             --project="$GCP_PROJECT_ID" \
             --region="$GCP_REGION" \
             --image="$DEPLOY_DIGEST" \
-            --remove-env-vars="MLFLOW_AUTO_PROMOTE" \
+            --remove-env-vars="MLFLOW_AUTO_PROMOTE,TRAINING_JOB_TYPE,TRAINING_MODE,TRAINING_TRANSACTIONS_URI,TRAINING_SPLIT_DATETIME" \
+            --update-env-vars="TRAINING_DATA_URI=$TRAINING_DATA_URI,MLFLOW_REGISTERED_MODEL_NAME=$REGISTERED_MODEL_NAME" \
             --quiet
 
       - name: Verify configured Training Job image
@@ -159,11 +165,12 @@ jobs:
             --project="$GCP_PROJECT_ID" \
             --region="$GCP_REGION" \
             --format=json > "$job_config"
-          python3 - "$job_config" <<'PY'
+          python3 - "$job_config" "$TRAINING_DATA_URI" "$REGISTERED_MODEL_NAME" <<'PY'
           import json
           import sys
 
           job = json.load(open(sys.argv[1], encoding="utf-8"))
+          expected_data_uri, expected_model_name = sys.argv[2:]
           containers = (
               job.get("spec", {})
               .get("template", {})
@@ -177,9 +184,40 @@ jobs:
               for container in containers
               for item in container.get("env", [])
           }
-          if "MLFLOW_AUTO_PROMOTE" in environment_names:
-              raise SystemExit("::error::Legacy automatic promotion environment remains")
-          print("Legacy automatic promotion environment is absent.")
+          legacy_environment = {
+              "MLFLOW_AUTO_PROMOTE",
+              "TRAINING_JOB_TYPE",
+              "TRAINING_MODE",
+              "TRAINING_TRANSACTIONS_URI",
+              "TRAINING_SPLIT_DATETIME",
+          }
+          remaining_legacy = sorted(legacy_environment & environment_names)
+          if remaining_legacy:
+              raise SystemExit(
+                  "::error::Legacy training environment remains: "
+                  + ", ".join(remaining_legacy)
+              )
+          environment = {
+              item.get("name"): item.get("value")
+              for container in containers
+              for item in container.get("env", [])
+              if item.get("name")
+          }
+          expected = {
+              "TRAINING_DATA_URI": expected_data_uri,
+              "MLFLOW_REGISTERED_MODEL_NAME": expected_model_name,
+          }
+          mismatches = {
+              name: environment.get(name)
+              for name, value in expected.items()
+              if environment.get(name) != value
+          }
+          if mismatches:
+              raise SystemExit(
+                  "::error::Training contract environment mismatch: "
+                  + repr(mismatches)
+              )
+          print("Legacy environment is absent and train1/model80 contract is active.")
           PY
 
           echo "Cloud Run Training Job image updated: $configured_image"
