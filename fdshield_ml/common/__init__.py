@@ -1,1 +1,1 @@
-"""Serving과 Training이 함께 사용하는 입력 계약과 전처리 코드."""
+"""Serving과 Training이 공유하는 ML 담당자 기준 전처리와 모델 계약."""

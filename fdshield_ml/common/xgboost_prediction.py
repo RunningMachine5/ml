@@ -1,10 +1,10 @@
-"""XGBoost 확률과 설명 계산이 같은 트리 범위를 사용하도록 돕는다."""
+"""XGBoost 확률과 SHAP 계산이 같은 트리 범위를 사용하도록 돕는다."""
 
 from __future__ import annotations
 
 
 def prediction_iteration_range(model: object, booster: object) -> tuple[int, int]:
-    """scikit-learn wrapper가 예측에 사용하는 [begin, end) 트리 범위를 반환한다."""
+    """scikit-learn wrapper가 예측에 사용하는 ``[begin, end)`` 범위를 반환한다."""
 
     try:
         best_iteration = model.best_iteration
@@ -27,3 +27,6 @@ def prediction_iteration_range(model: object, booster: object) -> tuple[int, int
     if rounds < 1:
         raise ValueError("XGBoost booster must contain at least one tree round")
     return (0, rounds)
+
+
+__all__ = ["prediction_iteration_range"]

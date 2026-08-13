@@ -1,4 +1,4 @@
-"""모델 artifact와 Registry에 저장하는 사기 판정 임계값 계약."""
+"""학습과 추론이 공유하는 사기 판정 임계값 계약."""
 
 from __future__ import annotations
 
@@ -19,7 +19,9 @@ def validate_decision_threshold(value: object, *, source: str) -> float:
     try:
         threshold = float(value)
     except (TypeError, ValueError) as exc:
-        raise DecisionThresholdError(f"{source} must be a number between 0 and 1") from exc
+        raise DecisionThresholdError(
+            f"{source} must be a number between 0 and 1"
+        ) from exc
     if not math.isfinite(threshold) or not 0 <= threshold <= 1:
         raise DecisionThresholdError(f"{source} must be a number between 0 and 1")
     return threshold
@@ -73,3 +75,13 @@ def resolve_model_decision_threshold(
         return stored_threshold
     assert tagged_threshold is not None
     return tagged_threshold
+
+
+__all__ = [
+    "DECISION_THRESHOLD_ATTRIBUTE",
+    "DECISION_THRESHOLD_TAG",
+    "DecisionThresholdError",
+    "resolve_model_decision_threshold",
+    "store_model_decision_threshold",
+    "validate_decision_threshold",
+]
