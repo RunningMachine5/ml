@@ -1,72 +1,88 @@
-"""로컬·GCS 학습 데이터 Loader 테스트."""
+"""로컬·GCS train1 raw64 학습 데이터 Loader 테스트."""
 
 from __future__ import annotations
 
-from pathlib import Path
 from collections.abc import Callable
+from pathlib import Path
 
 import pandas as pd
 import pytest
 
-from fdshield_ml.common.preprocessing import preprocess_frame
-from fdshield_ml.training.data_loader import (
+from fdshield_ml.config.preprocess_config import RAW_TRAINING_INPUT_COLUMNS
+from fdshield_ml.infrastructure.data_source import (
     GCSObjectLocation,
-    TrainingDataError,
     data_source_type,
-    inspect_training_csv,
     materialize_training_data,
 )
-
 
 RawFeaturesFactory = Callable[..., dict[str, object]]
 
 
-def write_training_csv(path: Path) -> None:
-    pd.DataFrame(
-        {
-            "Account_account_number": ["account-1", "account-2", "account-3"],
-            "Transaction_Amount": [10_000, 50_000, 90_000],
-            "Fraud_Type": ["m", "a", "l"],
+def write_training_csv(
+    path: Path,
+    raw_features_factory: RawFeaturesFactory,
+    *,
+    labels: list[object] | None = None,
+) -> None:
+    target = labels or [0, 1, 0, 1]
+    rows: list[dict[str, object]] = []
+    for index, label in enumerate(target, start=1):
+        row = {
+            "transaction_id": index,
+            **raw_features_factory(transaction_amount=10_000 * index),
+            "customer_identification_number": f"synthetic-{index}",
+            "customer_id": index,
+            "balance_drain_ratio": 0.1,
+            "is_fraud": label,
         }
-    ).to_csv(path, index=False)
+        row["flag_deposit_more_than_tenmillion"] = row.pop(
+            "flag_deposit_more_than_ten_million"
+        )
+        rows.append(row)
+    pd.DataFrame(rows).loc[:, RAW_TRAINING_INPUT_COLUMNS].to_csv(path, index=False)
 
 
-def test_data_source_type_supports_local_gcs_and_stub() -> None:
-    assert data_source_type("data/open/train.csv") == "local"
-    assert data_source_type("C:/datasets/train.csv") == "local"
-    assert data_source_type("gs://bucket/path/train.csv") == "gcs"
-    assert data_source_type("stub://local-data") == "stub"
+def test_data_source_type_supports_local_and_gcs() -> None:
+    assert data_source_type("data/open/train1.csv") == "local"
+    assert data_source_type("C:/datasets/train1.csv") == "local"
+    assert data_source_type("gs://bucket/path/train1.csv") == "gcs"
 
 
 def test_data_source_type_rejects_http_uri() -> None:
     with pytest.raises(ValueError, match="local path"):
-        data_source_type("https://example.com/train.csv")
+        data_source_type("https://example.com/train1.csv")
 
 
 def test_gcs_location_requires_bucket_and_object() -> None:
     assert GCSObjectLocation.from_uri(
-        "gs://fdshield-data/training/raw/train.csv"
+        "gs://fdshield-data/training/raw/train1.csv"
     ) == GCSObjectLocation(
         bucket_name="fdshield-data",
-        object_name="training/raw/train.csv",
+        object_name="training/raw/train1.csv",
     )
 
     with pytest.raises(ValueError, match="bucket and object"):
         GCSObjectLocation.from_uri("gs://fdshield-data")
 
 
-def test_local_training_data_is_used_without_copy(tmp_path: Path) -> None:
-    source = tmp_path / "train.csv"
-    write_training_csv(source)
+def test_local_training_data_is_used_without_copy(
+    tmp_path: Path,
+    raw_features_factory: RawFeaturesFactory,
+) -> None:
+    source = tmp_path / "train1.csv"
+    write_training_csv(source, raw_features_factory)
 
     with materialize_training_data(str(source)) as materialized:
         assert materialized == source.resolve()
         assert materialized.read_bytes() == source.read_bytes()
 
 
-def test_gcs_training_data_is_downloaded_to_temporary_file(tmp_path: Path) -> None:
+def test_gcs_training_data_is_downloaded_to_temporary_file(
+    tmp_path: Path,
+    raw_features_factory: RawFeaturesFactory,
+) -> None:
     source = tmp_path / "gcs-source.csv"
-    write_training_csv(source)
+    write_training_csv(source, raw_features_factory)
     calls: dict[str, str] = {}
 
     class FakeBlob:
@@ -85,7 +101,7 @@ def test_gcs_training_data_is_downloaded_to_temporary_file(tmp_path: Path) -> No
             return FakeBucket()
 
     with materialize_training_data(
-        "gs://fdshield-data/datasets/open/v1/train.csv",
+        "gs://fdshield-data/datasets/train1/v1/train1.csv",
         storage_client_factory=FakeClient,
     ) as materialized:
         downloaded = materialized
@@ -93,94 +109,5 @@ def test_gcs_training_data_is_downloaded_to_temporary_file(tmp_path: Path) -> No
         assert downloaded.read_bytes() == source.read_bytes()
 
     assert calls["bucket_name"] == "fdshield-data"
-    assert calls["object_name"] == "datasets/open/v1/train.csv"
+    assert calls["object_name"] == "datasets/train1/v1/train1.csv"
     assert not downloaded.exists()
-
-
-def test_training_csv_summary_contains_only_counts(tmp_path: Path) -> None:
-    source = tmp_path / "train.csv"
-    write_training_csv(source)
-
-    summary = inspect_training_csv(source, chunk_size=2)
-
-    assert summary.row_count == 3
-    assert summary.column_count == 3
-    assert summary.normal_count == 1
-    assert summary.fraud_count == 2
-    assert summary.file_size_bytes == source.stat().st_size
-
-
-def test_training_csv_rejects_missing_required_column(tmp_path: Path) -> None:
-    source = tmp_path / "train.csv"
-    pd.DataFrame({"Fraud_Type": ["m"]}).to_csv(source, index=False)
-
-    with pytest.raises(TrainingDataError, match="Account_account_number"):
-        inspect_training_csv(source)
-
-
-def test_training_csv_rejects_invalid_label(tmp_path: Path) -> None:
-    source = tmp_path / "train.csv"
-    pd.DataFrame(
-        {
-            "Account_account_number": ["account-1"],
-            "Fraud_Type": ["unknown"],
-        }
-    ).to_csv(source, index=False)
-
-    with pytest.raises(TrainingDataError, match="Invalid training labels"):
-        inspect_training_csv(source)
-
-
-def test_preprocessed_training_csv_validates_with_companion_transactions(
-    tmp_path: Path,
-    raw_features_factory: RawFeaturesFactory,
-) -> None:
-    datetimes = [
-        "2026-03-30 10:00:00",
-        "2026-03-31 11:00:00",
-        "2026-04-01 12:00:00",
-        "2026-04-02 13:00:00",
-    ]
-    labels = [0, 1, 0, 1]
-    raw = pd.DataFrame(
-        [
-            raw_features_factory(Transaction_Datetime=value)
-            for value in datetimes
-        ]
-    )
-    training = preprocess_frame(raw)
-    training["Is_Fraud"] = labels
-    training_path = tmp_path / "train.csv"
-    transactions_path = tmp_path / "transactions.csv"
-    training.to_csv(training_path, index=False)
-    pd.DataFrame(
-        {
-            "Transaction_Datetime": datetimes,
-            "Is_Fraud": labels,
-        }
-    ).to_csv(transactions_path, index=False)
-
-    summary = inspect_training_csv(
-        training_path,
-        transactions_path=transactions_path,
-        minimum_fraud_rows_per_split=1,
-    )
-
-    assert summary.row_count == 4
-    assert summary.column_count == 92
-    assert summary.normal_count == 2
-    assert summary.fraud_count == 2
-
-
-def test_preprocessed_training_csv_requires_companion_transactions(
-    tmp_path: Path,
-    raw_features_factory: RawFeaturesFactory,
-) -> None:
-    raw = pd.DataFrame([raw_features_factory() for _ in range(2)])
-    training = preprocess_frame(raw)
-    training["Is_Fraud"] = [0, 1]
-    source = tmp_path / "train.csv"
-    training.to_csv(source, index=False)
-
-    with pytest.raises(TrainingDataError, match="requires companion transactions"):
-        inspect_training_csv(source)

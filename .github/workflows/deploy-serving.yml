@@ -1,20 +1,17 @@
 name: ML Serving Cloud Run CD
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/deploy-serving.yml"
-      - ".dockerignore"
-      - "Dockerfile.serving"
-      - "cloudbuild.serving.yaml"
-      - "deploy/serving-requirements.txt"
-      - "fdshield_ml/__init__.py"
-      - "fdshield_ml/features.py"
-      - "fdshield_ml/common/**"
-      - "fdshield_ml/serving/**"
-      - "models/**"
   workflow_dispatch:
+    inputs:
+      model_name:
+        description: Exact MLflow Registry model name to stage
+        required: true
+        default: fdshield-fraud-detector-v2
+        type: string
+      model_version:
+        description: Exact positive MLflow Registry version to stage at 0% traffic
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -73,7 +70,10 @@ jobs:
       - name: Install Google Cloud CLI
         uses: google-github-actions/setup-gcloud@v3
 
-      - name: Resolve currently approved model configuration
+      - name: Resolve serving infrastructure and requested model configuration
+        env:
+          REQUESTED_MODEL_NAME: ${{ inputs.model_name }}
+          REQUESTED_MODEL_VERSION: ${{ inputs.model_version }}
         run: |
           service_config="$RUNNER_TEMP/cloud-run-service.json"
           if ! gcloud run services describe "$CLOUD_RUN_SERVICE" \
@@ -117,12 +117,23 @@ jobs:
             --region="$GCP_REGION" \
             --format=json > "$revision_config"
 
-          python3 - "$active_revision" "$revision_config" "$GITHUB_ENV" <<'PY'
+          python3 - \
+            "$active_revision" \
+            "$revision_config" \
+            "$GITHUB_ENV" \
+            "$REQUESTED_MODEL_NAME" \
+            "$REQUESTED_MODEL_VERSION" <<'PY'
           import json
           import re
           import sys
 
-          active_revision, revision_path, github_env_path = sys.argv[1:]
+          (
+              active_revision,
+              revision_path,
+              github_env_path,
+              requested_model_name,
+              requested_model_version,
+          ) = sys.argv[1:]
           revision = json.load(open(revision_path, encoding="utf-8"))
           containers = revision.get("spec", {}).get("containers", [])
           if not containers:
@@ -134,15 +145,13 @@ jobs:
               if item.get("name")
           }
           errors = []
-          predictor_mode = environment.get("ML_PREDICTOR_MODE", {}).get("value", "").lower()
-          model_name = environment.get("ML_MODEL_NAME", {}).get("value", "")
-          model_version = environment.get("ML_MODEL_VERSION", {}).get("value", "")
-          if predictor_mode != "mlflow":
-              errors.append("active revision ML_PREDICTOR_MODE must be mlflow")
-          if not model_name or any(char in model_name for char in "\r\n,"):
-              errors.append("active revision ML_MODEL_NAME must be a single safe value")
-          if not re.fullmatch(r"[1-9][0-9]*", model_version):
-              errors.append("active revision ML_MODEL_VERSION must be a positive integer")
+          predictor_mode = "mlflow"
+          if not requested_model_name or any(
+              char in requested_model_name for char in "\r\n,"
+          ):
+              errors.append("requested model_name must be a single safe value")
+          if not re.fullmatch(r"[1-9][0-9]*", requested_model_version):
+              errors.append("requested model_version must be a positive integer")
 
           tracking_uri = environment.get("MLFLOW_TRACKING_URI", {}).get("value", "")
           if not tracking_uri.startswith(("http://", "https://")) or any(
@@ -168,8 +177,8 @@ jobs:
 
           with open(github_env_path, "a", encoding="utf-8") as github_env:
               github_env.write(f"PREDICTOR_MODE={predictor_mode}\n")
-              github_env.write(f"MODEL_NAME={model_name}\n")
-              github_env.write(f"MODEL_VERSION={model_version}\n")
+              github_env.write(f"MODEL_NAME={requested_model_name}\n")
+              github_env.write(f"MODEL_VERSION={requested_model_version}\n")
               github_env.write(f"MLFLOW_TRACKING_URI={tracking_uri}\n")
               github_env.write(
                   "MLFLOW_USERNAME_SECRET="
@@ -181,8 +190,9 @@ jobs:
               )
 
           print(
-              "Preserving approved active revision model configuration: "
-              f"revision={active_revision}, model={model_name}, version={model_version}"
+              "Staging requested model without production traffic: "
+              f"active_revision={active_revision}, model={requested_model_name}, "
+              f"version={requested_model_version}"
           )
           PY
 
@@ -360,17 +370,9 @@ jobs:
           print("Tagged revision uses the Cloud Build-smoked digest and exact model config.")
           PY
 
-      - name: Migrate all production traffic to verified revision
+      - name: Confirm production traffic was not changed
         run: |
-          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" \
-            --project="$GCP_PROJECT_ID" \
-            --region="$GCP_REGION" \
-            --to-tags="$REVISION_TAG=100" \
-            --quiet
-
-      - name: Verify production traffic target
-        run: |
-          traffic_config="$RUNNER_TEMP/production-traffic.json"
+          traffic_config="$RUNNER_TEMP/unchanged-production-traffic.json"
           gcloud run services describe "$CLOUD_RUN_SERVICE" \
             --project="$GCP_PROJECT_ID" \
             --region="$GCP_REGION" \
@@ -379,19 +381,19 @@ jobs:
           import json
           import sys
 
-          expected_revision, traffic_path = sys.argv[1:]
+          staged_revision, traffic_path = sys.argv[1:]
           status = json.load(open(traffic_path, encoding="utf-8")).get("status", {})
-          revision_percent = {}
-          for target in status.get("traffic", []):
-              revision = target.get("revisionName", "")
-              percent = int(target.get("percent", 0) or 0)
-              if revision and percent:
-                  revision_percent[revision] = revision_percent.get(revision, 0) + percent
-
-          if revision_percent != {expected_revision: 100}:
+          staged_percent = sum(
+              int(target.get("percent", 0) or 0)
+              for target in status.get("traffic", [])
+              if target.get("revisionName") == staged_revision
+          )
+          if staged_percent != 0:
               raise SystemExit(
-                  "::error::Production traffic target mismatch: "
-                  f"expected {{{expected_revision!r}: 100}}, got {revision_percent}"
+                  "::error::Staged revision unexpectedly received production traffic"
               )
-          print(f"Production traffic migrated to {expected_revision}.")
+          print(
+              "Revision is Ready at 0% traffic. Use the Backend approval and smoke "
+              "workflow for production promotion."
+          )
           PY

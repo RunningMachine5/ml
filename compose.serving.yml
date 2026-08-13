@@ -9,7 +9,7 @@ services:
     environment:
       PORT: "8080"
       ML_PREDICTOR_MODE: ${ML_PREDICTOR_MODE:-local}
-      ML_LOCAL_MODEL_PATH: ${ML_LOCAL_MODEL_PATH:-/app/models/fdshield-fraud-detector-v5}
+      ML_LOCAL_MODEL_PATH: ${ML_LOCAL_MODEL_PATH:-/app/models/fdshield-fraud-detector-v2}
       ML_MODEL_NAME: ${ML_MODEL_NAME:-}
       ML_MODEL_VERSION: ${ML_MODEL_VERSION:-}
       MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-}

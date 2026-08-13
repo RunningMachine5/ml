@@ -10,9 +10,12 @@ on:
       - "cloudbuild.serving.yaml"
       - "deploy/serving-requirements.txt"
       - "fdshield_ml/__init__.py"
-      - "fdshield_ml/features.py"
-      - "fdshield_ml/common/**"
-      - "fdshield_ml/serving/**"
+      - "fdshield_ml/api/**"
+      - "fdshield_ml/config/**"
+      - "fdshield_ml/dto/**"
+      - "fdshield_ml/infrastructure/**"
+      - "fdshield_ml/service/**"
+      - "fdshield_ml/serving.py"
       - "models/**"
       - "examples/local-model-predict-request.json"
 
@@ -51,8 +54,8 @@ jobs:
           curl --fail --silent --show-error \
             --header "Content-Type: application/json" \
             --data @examples/local-model-predict-request.json \
-            http://127.0.0.1:18081/predict \
-            | python -c 'import json, sys; result = json.load(sys.stdin); assert result["model_name"] == "fdshield-fraud-detector"; assert result["model_version"] == "5"; assert len(result["shap"]) == 91'
+            http://127.0.0.1:18081/ml/predict \
+            | python -c 'import json, sys; result = json.load(sys.stdin); assert result["model_name"] == "fdshield-fraud-detector-v2"; assert result["model_version"] == "1"; assert result["predict_result"] in (0, 1); assert 0 <= result["predict_proba"] <= 1; assert len(result["shap_values"]) == 56'
 
       - name: Stop bundled model container
         if: always()

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from fdshield_ml.common.xgboost_prediction import prediction_iteration_range
+from fdshield_ml.service.xgboost_prediction import prediction_iteration_range
 
 
 class _Booster:

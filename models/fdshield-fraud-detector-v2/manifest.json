@@ -1,0 +1,14 @@
+{
+  "bundle_schema_version": 1,
+  "model_name": "fdshield-fraud-detector-v2",
+  "model_version": "1",
+  "model_format": "xgboost-json",
+  "model_file": "model.json",
+  "model_sha256": "92ac56d84d7c3808325fc06109798e16fd57c5c46901715681fdf8879d7b1506",
+  "feature_contract_version": "raw60-model80-v1",
+  "feature_count": 80,
+  "decision_threshold": 0.5,
+  "decision_threshold_source": "xgboost_default_predict",
+  "source_dataset": "train1-v1",
+  "source_dataset_sha256": "d025873c5e807976657b30721080d00bf6b6544b887ff339e768e8c13f54e446"
+}

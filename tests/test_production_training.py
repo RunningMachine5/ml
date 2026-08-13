@@ -1,4 +1,4 @@
-"""실제 학습·MLflow Registry 등록 흐름 테스트."""
+"""train1 raw64 학습·MLflow Registry 등록 흐름 테스트."""
 
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -9,65 +9,64 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from fdshield_ml.common.preprocessing import preprocess_frame
-from fdshield_ml.common.xgboost_prediction import prediction_iteration_range
-from fdshield_ml.training import production
+from fdshield_ml.config.preprocess_config import RAW_TRAINING_INPUT_COLUMNS
+from fdshield_ml.infrastructure import mlflow as mlflow_integration
+from fdshield_ml.infrastructure import training_pipeline
+from fdshield_ml.service.train import model_training
+from fdshield_ml.service.train.dataset import TRAINING_DATA_CONTRACT
+from fdshield_ml.service.xgboost_prediction import prediction_iteration_range
 
 RawFeaturesFactory = Callable[..., dict[str, object]]
 
 
 def _training_frame(raw_features_factory: RawFeaturesFactory) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
-    for group_number in range(10):
-        for row_number in range(4):
-            is_fraud = row_number % 2 == 0
-            rows.append(
-                {
-                    **raw_features_factory(
-                        Transaction_Datetime=(
-                            "2026-03-30 10:00:00"
-                            if row_number < 2
-                            else "2026-04-02 10:00:00"
-                        ),
-                        Transaction_Amount=(10_000_000 if is_fraud else 10_000)
-                        + group_number,
-                    ),
-                    "Account_account_number": f"account-{group_number}",
-                    "Is_Fraud": int(is_fraud),
-                }
-            )
-    return pd.DataFrame(rows)
+    for row_number in range(40):
+        is_fraud = row_number % 2 == 0
+        row = {
+            "transaction_id": f"TX-{row_number:04d}",
+            **raw_features_factory(
+                transaction_datetime=f"2026-03-{(row_number % 20) + 1:02d}T10:00:00+09:00",
+                transaction_amount=(10_000_000 if is_fraud else 10_000) + row_number,
+            ),
+            "customer_identification_number": f"synthetic-{row_number}",
+            "customer_id": row_number,
+            "balance_drain_ratio": 0.1,
+            "is_fraud": int(is_fraud),
+        }
+        row["flag_deposit_more_than_tenmillion"] = row.pop(
+            "flag_deposit_more_than_ten_million"
+        )
+        rows.append(row)
+    return pd.DataFrame(rows).loc[:, RAW_TRAINING_INPUT_COLUMNS]
 
 
 def _install_fake_mlflow(
     monkeypatch: pytest.MonkeyPatch,
 ) -> dict[str, object]:
     calls: dict[str, object] = {}
-    monkeypatch.setattr(production, "configure_tracking", lambda _: "https://mlflow")
-    monkeypatch.setattr(production, "verify_connection", lambda: 1)
-    monkeypatch.setattr(production.mlflow, "set_experiment", lambda _: None)
     monkeypatch.setattr(
-        production.mlflow,
+        mlflow_integration, "configure_tracking", lambda _: "https://mlflow"
+    )
+    monkeypatch.setattr(mlflow_integration, "verify_connection", lambda: 1)
+    monkeypatch.setattr(mlflow_integration.mlflow, "set_experiment", lambda _: None)
+    monkeypatch.setattr(
+        mlflow_integration.mlflow,
         "log_params",
         lambda params: calls.__setitem__("params", params),
     )
-    monkeypatch.setattr(production.mlflow, "log_metrics", lambda _: None)
+    monkeypatch.setattr(mlflow_integration.mlflow, "log_metrics", lambda _: None)
     monkeypatch.setattr(
-        production.mlflow,
+        mlflow_integration.mlflow,
         "set_tags",
         lambda tags: calls.__setitem__("run_tags", tags),
     )
     monkeypatch.setattr(
-        production.mlflow,
+        mlflow_integration.mlflow,
         "log_dict",
         lambda value, path: calls.setdefault("dict_artifacts", {}).__setitem__(
             path, value
         ),
-    )
-    monkeypatch.setattr(
-        production.mlflow,
-        "log_text",
-        lambda *_: pytest.fail("Production training must not log text artifacts"),
     )
 
     @contextmanager
@@ -75,13 +74,13 @@ def _install_fake_mlflow(
         assert run_name == "cloud-run-production-training"
         yield SimpleNamespace(info=SimpleNamespace(run_id="run-123"))
 
-    monkeypatch.setattr(production.mlflow, "start_run", fake_start_run)
+    monkeypatch.setattr(mlflow_integration.mlflow, "start_run", fake_start_run)
 
     def fake_log_model(**kwargs: object) -> object:
         calls["model"] = kwargs["sk_model"]
         return SimpleNamespace(registered_model_version=17)
 
-    monkeypatch.setattr(production.mlflow.sklearn, "log_model", fake_log_model)
+    monkeypatch.setattr(mlflow_integration.mlflow.sklearn, "log_model", fake_log_model)
 
     class FakeClient:
         def get_model_version_by_alias(self, *args: object) -> object:
@@ -92,35 +91,76 @@ def _install_fake_mlflow(
         def set_model_version_tag(self, *args: object) -> None:
             calls.setdefault("tags", []).append(args)
 
-        def set_registered_model_alias(self, *args: object) -> None:
-            calls["alias"] = args
-
-    monkeypatch.setattr(production, "MlflowClient", FakeClient)
+    monkeypatch.setattr(mlflow_integration, "MlflowClient", FakeClient)
     return calls
 
 
 def test_production_training_config_rejects_invalid_gate() -> None:
     with pytest.raises(ValueError, match="minimum_pr_auc"):
-        production.ProductionTrainingConfig(
-            registered_model_name="fdshield-fraud-detector",
+        training_pipeline.ProductionTrainingConfig(
+            registered_model_name="fdshield-fraud-detector-v2",
             minimum_pr_auc=1.1,
         )
 
 
-def test_train_registers_candidate_with_comparison_metadata(
+def test_received_training_defaults_and_manual_review_contract() -> None:
+    config = training_pipeline.ProductionTrainingConfig(
+        registered_model_name="fdshield-fraud-detector-v2"
+    )
+    params = model_training.build_classifier(config.model).get_params()
+
+    assert model_training.VALIDATION_FRACTION == pytest.approx(0.2)
+    assert model_training.DECISION_THRESHOLD == pytest.approx(0.5)
+    assert params["n_estimators"] == 1000
+    assert params["learning_rate"] == pytest.approx(0.05)
+    assert params["max_depth"] == 6
+    assert params["min_child_weight"] == pytest.approx(1.0)
+    assert params["gamma"] == pytest.approx(0.0)
+    assert params["reg_lambda"] == pytest.approx(1.0)
+    assert params["reg_alpha"] == pytest.approx(0.0)
+    assert params["subsample"] == pytest.approx(0.8)
+    assert params["colsample_bytree"] == pytest.approx(0.8)
+    assert params["scale_pos_weight"] == pytest.approx(99.0)
+    assert params["tree_method"] == "hist"
+    assert params["eval_metric"] == "logloss"
+    assert params["early_stopping_rounds"] == 50
+    assert params["random_state"] == 42
+    assert params["n_jobs"] == -1
+    assert (
+        training_pipeline.promotion_recommendation(
+            {"validation_pr_auc": 0.9},
+            None,
+            validation_passed=True,
+        )
+        == "REVIEW_REQUIRED"
+    )
+
+
+def test_legacy_91_feature_champion_is_not_compared() -> None:
+    assert (
+        mlflow_integration.champion_contract_matches(SimpleNamespace(n_features_in_=91))
+        is False
+    )
+    assert (
+        mlflow_integration.champion_contract_matches(SimpleNamespace(n_features_in_=80))
+        is True
+    )
+
+
+def test_train1_registers_candidate_with_comparison_metadata(
     tmp_path: Path,
     raw_features_factory: RawFeaturesFactory,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source = tmp_path / "transactions.csv"
+    source = tmp_path / "train1.csv"
     _training_frame(raw_features_factory).to_csv(source, index=False)
 
     calls = _install_fake_mlflow(monkeypatch)
     prediction_ranges: list[tuple[int, int] | None] = []
-    original_predict_proba = production.XGBClassifier.predict_proba
+    original_predict_proba = model_training.XGBClassifier.predict_proba
 
     def recording_predict_proba(
-        classifier: production.XGBClassifier,
+        classifier: model_training.XGBClassifier,
         features: object,
         **kwargs: object,
     ) -> object:
@@ -128,23 +168,24 @@ def test_train_registers_candidate_with_comparison_metadata(
         return original_predict_proba(classifier, features, **kwargs)
 
     monkeypatch.setattr(
-        production.XGBClassifier,
+        model_training.XGBClassifier,
         "predict_proba",
         recording_predict_proba,
     )
 
-    result = production.train_and_register_model(
+    result = training_pipeline.run_production_training(
         source,
         "fdshield-binary-training",
-        production.ProductionTrainingConfig(
-            registered_model_name="fdshield-fraud-detector",
+        training_pipeline.ProductionTrainingConfig(
+            registered_model_name="fdshield-fraud-detector-v2",
             minimum_pr_auc=0.0,
             minimum_recall=0.0,
-            minimum_fraud_rows_per_split=1,
-            n_estimators=2,
-            max_depth=2,
-            early_stopping_rounds=1,
-            n_jobs=1,
+            model=model_training.ModelTrainingConfig(
+                n_estimators=2,
+                max_depth=2,
+                early_stopping_rounds=1,
+                n_jobs=1,
+            ),
         ),
     )
 
@@ -152,26 +193,28 @@ def test_train_registers_candidate_with_comparison_metadata(
     assert result.model_version == 17
     assert result.validation_passed is True
     assert result.recommendation == "REVIEW_REQUIRED"
-    assert calls["tags"][:2] == [
-        ("fdshield-fraud-detector", "17", "validation_status", "passed"),
+    assert calls["tags"] == [
+        ("fdshield-fraud-detector-v2", "17", "validation_status", "passed"),
         (
-            "fdshield-fraud-detector",
+            "fdshield-fraud-detector-v2",
             "17",
             "promotion_recommendation",
             "REVIEW_REQUIRED",
         ),
+        ("fdshield-fraud-detector-v2", "17", "decision_threshold", "0.5"),
+        (
+            "fdshield-fraud-detector-v2",
+            "17",
+            "feature_contract",
+            TRAINING_DATA_CONTRACT,
+        ),
     ]
-    assert calls["tags"][2] == (
-        "fdshield-fraud-detector",
-        "17",
-        "decision_threshold",
-        repr(result.metrics["decision_threshold"]),
-    )
-    assert "alias" not in calls
-    assert calls["params"]["training_data_contract"] == "raw"
-    assert calls["params"]["split_strategy"] == "time"
-    assert calls["params"]["decision_threshold"] == result.metrics["decision_threshold"]
-    assert calls["model"].decision_threshold_ == result.metrics["decision_threshold"]
+    assert calls["params"]["training_data_contract"] == "train1-raw64"
+    assert calls["params"]["feature_contract"] == TRAINING_DATA_CONTRACT
+    assert calls["params"]["split_strategy"] == "random_stratified_80_20"
+    assert calls["params"]["validation_fraction"] == pytest.approx(0.2)
+    assert calls["params"]["decision_threshold"] == pytest.approx(0.5)
+    assert calls["model"].decision_threshold_ == pytest.approx(0.5)
     expected_range = prediction_iteration_range(
         calls["model"],
         calls["model"].get_booster(),
@@ -184,166 +227,133 @@ def test_train_registers_candidate_with_comparison_metadata(
     comparison = calls["dict_artifacts"]["metadata/model-comparison.json"]
     assert comparison["candidate"] == result.metrics
     assert comparison["champion"] is None
+    assert comparison["champion_comparison_status"] == "not_available"
     assert comparison["recommendation"] == result.recommendation
-    assert calls["run_tags"] == {
-        "project": "fdshield",
-        "task": "binary_fraud_detection",
-        "pipeline_stage": "production_training",
-        "validation_status": "passed",
-        "promotion_recommendation": "REVIEW_REQUIRED",
-        "champion_model_version": "",
-    }
-    assert len(calls["tags"]) == 3
+    feature_schema = calls["dict_artifacts"]["metadata/model-feature-schema.json"]
+    assert feature_schema["feature_contract"] == TRAINING_DATA_CONTRACT
+    assert feature_schema["feature_count"] == 80
+    assert calls["run_tags"]["feature_contract"] == TRAINING_DATA_CONTRACT
+    assert calls["run_tags"]["champion_comparison_status"] == "not_available"
 
 
 def test_champion_evaluation_uses_registered_model_threshold_tag(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class LegacyChampion:
+    class Model80Champion:
+        n_features_in_ = 80
+
         def predict_proba(self, features: pd.DataFrame) -> object:
             assert len(features) == 2
             return np.asarray([[0.4, 0.6], [0.3, 0.7]])
 
     class FakeClient:
+        def get_model_version_by_alias(self, name: str, alias: str) -> object:
+            assert name == "fdshield-fraud-detector-v2"
+            assert alias == "champion"
+            return SimpleNamespace(version="5")
+
         def get_model_version(self, name: str, version: str) -> object:
-            assert name == "fdshield-fraud-detector"
+            assert name == "fdshield-fraud-detector-v2"
             assert version == "5"
             return SimpleNamespace(tags={"decision_threshold": "0.65"})
 
     monkeypatch.setattr(
-        production.mlflow.sklearn,
+        mlflow_integration.mlflow.sklearn,
+        "load_model",
+        lambda _: Model80Champion(),
+    )
+
+    evaluation = mlflow_integration.evaluate_champion(
+        FakeClient(),  # type: ignore[arg-type]
+        registered_model_name="fdshield-fraud-detector-v2",
+        model_alias="champion",
+        features=pd.DataFrame(np.zeros((2, 80))),
+        target=pd.Series([0, 1]),
+    )
+
+    assert evaluation.model_version == 5
+    assert evaluation.metrics is not None
+    assert evaluation.metrics["decision_threshold"] == pytest.approx(0.65)
+    assert evaluation.metrics["validation_recall"] == pytest.approx(1.0)
+
+
+def test_legacy_91_feature_champion_comparison_is_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class LegacyChampion:
+        n_features_in_ = 91
+
+    class FakeClient:
+        def get_model_version_by_alias(self, name: str, alias: str) -> object:
+            assert name == "fdshield-fraud-detector-v2"
+            assert alias == "champion"
+            return SimpleNamespace(version="5")
+
+        def get_model_version(self, name: str, version: str) -> object:
+            assert name == "fdshield-fraud-detector-v2"
+            assert version == "5"
+            return SimpleNamespace(tags={"decision_threshold": "0.55"})
+
+    monkeypatch.setattr(
+        mlflow_integration.mlflow.sklearn,
         "load_model",
         lambda _: LegacyChampion(),
     )
 
-    version, metrics = production._champion_evaluation(
+    evaluation = mlflow_integration.evaluate_champion(
         FakeClient(),  # type: ignore[arg-type]
-        production.ProductionTrainingConfig(
-            registered_model_name="fdshield-fraud-detector",
-            champion_model_version=5,
-        ),
-        pd.DataFrame({"feature": [0.0, 1.0]}),
-        pd.Series([0, 1]),
+        registered_model_name="fdshield-fraud-detector-v2",
+        model_alias="champion",
+        features=pd.DataFrame(np.zeros((2, 80))),
+        target=pd.Series([0, 1]),
     )
 
-    assert version == 5
-    assert metrics is not None
-    assert metrics["decision_threshold"] == pytest.approx(0.65)
-    assert metrics["validation_recall"] == pytest.approx(1.0)
+    assert evaluation.model_version == 5
+    assert evaluation.metrics is None
 
 
-def test_recommendation_requires_relative_improvement_without_guardrail_regression() -> None:
+def test_recommendation_requires_relative_improvement_without_guardrail_regression() -> (
+    None
+):
     champion = {
         "validation_pr_auc": 0.90,
         "validation_recall": 0.85,
         "validation_fpr": 0.01,
     }
 
-    assert production._promotion_recommendation(
-        {
-            "validation_pr_auc": 0.91,
-            "validation_recall": 0.86,
-            "validation_fpr": 0.009,
-        },
-        champion,
-        validation_passed=True,
-    ) == "RECOMMENDED"
-    assert production._promotion_recommendation(
-        {
-            "validation_pr_auc": 0.91,
-            "validation_recall": 0.80,
-            "validation_fpr": 0.009,
-        },
-        champion,
-        validation_passed=True,
-    ) == "REVIEW_REQUIRED"
-    assert production._promotion_recommendation(
-        {
-            "validation_pr_auc": 0.89,
-            "validation_recall": 0.90,
-            "validation_fpr": 0.009,
-        },
-        champion,
-        validation_passed=True,
-    ) == "NOT_RECOMMENDED"
-
-
-def test_train_accepts_exact_preprocessed_contract_with_time_split(
-    tmp_path: Path,
-    raw_features_factory: RawFeaturesFactory,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    raw_rows: list[dict[str, object]] = []
-    labels: list[int] = []
-    datetimes: list[str] = []
-    for side, transaction_datetime in enumerate(
-        ("2026-03-30 10:00:00", "2026-04-02 10:00:00")
-    ):
-        for row_number in range(10):
-            is_fraud = row_number % 2
-            raw_rows.append(
-                raw_features_factory(
-                    Transaction_Datetime=transaction_datetime,
-                    Transaction_Amount=10_000_000 if is_fraud else 10_000,
-                )
-            )
-            labels.append(is_fraud)
-            datetimes.append(transaction_datetime)
-
-    preprocessed = preprocess_frame(pd.DataFrame(raw_rows))
-    preprocessed["Is_Fraud"] = labels
-    training_path = tmp_path / "train.csv"
-    transactions_path = tmp_path / "transactions.csv"
-    preprocessed.to_csv(training_path, index=False)
-    pd.DataFrame(
-        {
-            "Transaction_Datetime": datetimes,
-            "Is_Fraud": labels,
-        }
-    ).to_csv(transactions_path, index=False)
-    calls = _install_fake_mlflow(monkeypatch)
-
-    result = production.train_and_register_model(
-        training_path,
-        "fdshield-binary-training",
-        production.ProductionTrainingConfig(
-            registered_model_name="fdshield-fraud-detector",
-            minimum_fraud_rows_per_split=1,
-            n_estimators=2,
-            max_depth=2,
-            early_stopping_rounds=1,
-            n_jobs=1,
-        ),
-        transactions_path,
-    )
-
-    assert result.model_version == 17
-    assert calls["params"]["training_data_contract"] == "preprocessed"
-    assert calls["params"]["split_strategy"] == "time"
-    assert calls["params"]["split_datetime"] == "2026-04-01 00:00:00"
-
-
-def test_preprocessed_training_requires_companion_transactions(
-    tmp_path: Path,
-    raw_features_factory: RawFeaturesFactory,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    rows = [raw_features_factory() for _ in range(10)]
-    source = preprocess_frame(pd.DataFrame(rows))
-    source["Is_Fraud"] = [0, 1] * 5
-    path = tmp_path / "train.csv"
-    source.to_csv(path, index=False)
-    monkeypatch.setattr(production, "configure_tracking", lambda _: "https://mlflow")
-    monkeypatch.setattr(production, "verify_connection", lambda: 1)
-
-    with pytest.raises(
-        production.ProductionTrainingError,
-        match="requires companion transactions",
-    ):
-        production.train_and_register_model(
-            path,
-            "fdshield-binary-training",
-            production.ProductionTrainingConfig(
-                registered_model_name="fdshield-fraud-detector",
-            ),
+    assert (
+        training_pipeline.promotion_recommendation(
+            {
+                "validation_pr_auc": 0.91,
+                "validation_recall": 0.86,
+                "validation_fpr": 0.009,
+            },
+            champion,
+            validation_passed=True,
         )
+        == "RECOMMENDED"
+    )
+    assert (
+        training_pipeline.promotion_recommendation(
+            {
+                "validation_pr_auc": 0.91,
+                "validation_recall": 0.80,
+                "validation_fpr": 0.009,
+            },
+            champion,
+            validation_passed=True,
+        )
+        == "REVIEW_REQUIRED"
+    )
+    assert (
+        training_pipeline.promotion_recommendation(
+            {
+                "validation_pr_auc": 0.89,
+                "validation_recall": 0.90,
+                "validation_fpr": 0.009,
+            },
+            champion,
+            validation_passed=True,
+        )
+        == "NOT_RECOMMENDED"
+    )
