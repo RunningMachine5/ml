@@ -28,8 +28,14 @@ GCS, Cloud Run Job, MLflow Registry, Backend Callback, 관리자 수동 승인 �
 전달본 DTO·CSV의 기존 불일치는 실제 데이터와 model80 계약을 기준으로
 보정합니다. `account_remaining_amount_daily_limit_exceeded`는 bool이 아닌
 숫자형 금액으로 받고, Channel·Operating System은 공백 제거 후 소문자로
-정규화하며, 없을 수 있는 Operating System은 nullable로 유지합니다. 원본
-CSV는 수정하지 않습니다.
+정규화합니다. Operating System과 Access Medium은 nullable이며 값이 없으면
+각 One-hot 그룹을 모두 0으로 둡니다. `account_account_type=e`도 기존 model80의
+`a~d` One-hot을 모두 0으로 두는 unseen category로 허용하므로 Feature 추가나
+재학습은 하지 않습니다. 계좌 최초 잔액·현재 잔액·일일 한도 초과 잔액은
+nullable이며 model80에 투영되는 missing 값과 관련 비율은 XGBoost가 처리할
+`NaN`으로 유지합니다. `error_code`는 최대 8자이고, 외부 canonical 입금 플래그
+이름은 `flag_deposit_more_than_ten_million`을 계속 사용합니다. 원본 CSV는
+수정하지 않습니다.
 
 ## 코드 구조
 

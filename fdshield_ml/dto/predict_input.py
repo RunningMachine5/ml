@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 FeatureValue = str | int | float | bool | datetime | timedelta | None
 
@@ -52,12 +52,12 @@ class PredictInputDTO(BaseModel):
     account_account_number: str | int
     account_account_type: str
     account_creation_datetime: datetime
-    account_initial_balance: float
-    account_balance: float
+    account_initial_balance: float | None
+    account_balance: float | None
     account_indicator_release_limit_excess: int
     account_amount_daily_limit: float
     # 전달 DTO의 bool 표기는 CSV·학습 모델과 달라 금액형으로 바로잡는다.
-    account_remaining_amount_daily_limit_exceeded: float
+    account_remaining_amount_daily_limit_exceeded: float | None
     account_indicator_openbanking: bool
     account_release_suspention: bool
     account_one_month_max_amount: float
@@ -68,11 +68,11 @@ class PredictInputDTO(BaseModel):
     transaction_amount: float
     channel: str
     operating_system: str | None
-    error_code: str
+    error_code: str = Field(max_length=8)
     type_general_automatic: str
     ip_address: str | None
     mac_address: str | None
-    access_medium: str
+    access_medium: str | None
     location: str
     recipient_account_number: str | int
     transaction_num_connection_failure: int
@@ -94,6 +94,21 @@ class PredictInputDTO(BaseModel):
     @classmethod
     def normalize_transaction_id(cls, value: object) -> str:
         return _normalize_transaction_id(value)
+
+    @field_validator(
+        "account_initial_balance",
+        "account_balance",
+        "account_remaining_amount_daily_limit_exceeded",
+        "access_medium",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_train1_value(cls, value: object) -> object | None:
+        """CSV 빈칸과 JSON null을 같은 missing 입력으로 취급한다."""
+
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        return value
 
     @field_validator(
         "account_remaining_amount_daily_limit_exceeded",
