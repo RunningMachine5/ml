@@ -110,6 +110,7 @@ jobs:
           print(next(iter(revision_percent)))
           PY
           )"
+          echo "APPROVED_REVISION=$active_revision" >> "$GITHUB_ENV"
 
           revision_config="$RUNNER_TEMP/cloud-run-active-revision.json"
           gcloud run revisions describe "$active_revision" \
@@ -126,6 +127,11 @@ jobs:
           import json
           import re
           import sys
+
+          from deploy.serving_revision_contract import (
+              ServingRevisionContractError,
+              validate_mlflow_tracking_uri,
+          )
 
           (
               active_revision,
@@ -154,10 +160,10 @@ jobs:
               errors.append("requested model_version must be a positive integer")
 
           tracking_uri = environment.get("MLFLOW_TRACKING_URI", {}).get("value", "")
-          if not tracking_uri.startswith(("http://", "https://")) or any(
-              char in tracking_uri for char in "\r\n,"
-          ):
-              errors.append("MLFLOW_TRACKING_URI must be a non-empty HTTP(S) value")
+          try:
+              tracking_uri = validate_mlflow_tracking_uri(tracking_uri)
+          except ServingRevisionContractError as exc:
+              errors.append(str(exc))
 
           secret_names = {}
           for name in ("MLFLOW_TRACKING_USERNAME", "MLFLOW_TRACKING_PASSWORD"):
@@ -261,9 +267,55 @@ jobs:
           fi
           echo "DEPLOY_DIGEST=$deploy_digest" >> "$GITHUB_ENV"
 
-      - name: Deploy tagged revision without production traffic
+      - name: Resolve immutable model version tag
         run: |
-          revision_tag="model-${GITHUB_SHA::12}"
+          revision_tag="model-v${MODEL_VERSION}"
+          tag_check_service="$RUNNER_TEMP/tag-check-service.json"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" \
+            --project="$GCP_PROJECT_ID" \
+            --region="$GCP_REGION" \
+            --format=json > "$tag_check_service"
+          echo "REVISION_TAG=$revision_tag" >> "$GITHUB_ENV"
+          python3 deploy/serving_revision_contract.py resolve \
+            --service "$tag_check_service" \
+            --tag "$revision_tag" \
+            --github-env "$GITHUB_ENV" \
+            --revision-env EXISTING_REVISION \
+            --url-env EXISTING_TAGGED_URL
+
+      - name: Reuse exact staged revision or reject model tag collision
+        if: env.EXISTING_REVISION != ''
+        run: |
+          existing_revision_config="$RUNNER_TEMP/existing-tagged-revision.json"
+          current_service_config="$RUNNER_TEMP/existing-tagged-service.json"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" \
+            --project="$GCP_PROJECT_ID" \
+            --region="$GCP_REGION" \
+            --format=json > "$current_service_config"
+          gcloud run revisions describe "$EXISTING_REVISION" \
+            --project="$GCP_PROJECT_ID" \
+            --region="$GCP_REGION" \
+            --format=json > "$existing_revision_config"
+
+          if ! python3 deploy/serving_revision_contract.py verify \
+            --service "$current_service_config" \
+            --revision "$existing_revision_config" \
+            --expected-revision "$EXISTING_REVISION" \
+            --expected-tag "$REVISION_TAG" \
+            --expected-digest "$DEPLOY_DIGEST" \
+            --expected-mode "$PREDICTOR_MODE" \
+            --expected-model-name "$MODEL_NAME" \
+            --expected-model-version "$MODEL_VERSION"; then
+            echo "::error::$REVISION_TAG already exists with a different or non-staged contract. Model version tags are immutable and will not be moved."
+            exit 1
+          fi
+
+          echo "Reusing $EXISTING_REVISION for idempotent deployment of $REVISION_TAG."
+          echo "SERVING_DEPLOY_MODE=reuse" >> "$GITHUB_ENV"
+
+      - name: Deploy new model version tag without production traffic
+        if: env.EXISTING_REVISION == ''
+        run: |
           gcloud run deploy "$CLOUD_RUN_SERVICE" \
             --project="$GCP_PROJECT_ID" \
             --region="$GCP_REGION" \
@@ -271,9 +323,9 @@ jobs:
             --remove-env-vars="ML_FRAUD_THRESHOLD" \
             --update-env-vars="ML_PREDICTOR_MODE=$PREDICTOR_MODE,ML_MODEL_NAME=$MODEL_NAME,ML_MODEL_VERSION=$MODEL_VERSION" \
             --no-traffic \
-            --tag="$revision_tag" \
+            --tag="$REVISION_TAG" \
             --quiet
-          echo "REVISION_TAG=$revision_tag" >> "$GITHUB_ENV"
+          echo "SERVING_DEPLOY_MODE=create" >> "$GITHUB_ENV"
 
       - name: Resolve tagged revision URL
         run: |
@@ -281,94 +333,39 @@ jobs:
             --project="$GCP_PROJECT_ID" \
             --region="$GCP_REGION" \
             --format=json > "$RUNNER_TEMP/service.json"
-          read -r service_url tagged_url latest_created_revision < <(
-            python3 - "$REVISION_TAG" "$RUNNER_TEMP/service.json" <<'PY'
+          service_url="$(python3 - "$RUNNER_TEMP/service.json" <<'PY'
           import json
           import sys
 
-          tag, path = sys.argv[1:]
-          status = json.load(open(path, encoding="utf-8")).get("status", {})
-          tagged_url = next(
-              (target.get("url", "") for target in status.get("traffic", []) if target.get("tag") == tag),
-              "",
-          )
-          print(status.get("url", ""), tagged_url, status.get("latestCreatedRevisionName", ""))
+          print(json.load(open(sys.argv[1], encoding="utf-8")).get("status", {}).get("url", ""))
           PY
-          )
+          )"
           test -n "$service_url"
-          test -n "$tagged_url"
-          test -n "$latest_created_revision"
           echo "SERVICE_URL=$service_url" >> "$GITHUB_ENV"
-          echo "TAGGED_URL=$tagged_url" >> "$GITHUB_ENV"
-          echo "NEW_REVISION=$latest_created_revision" >> "$GITHUB_ENV"
+          python3 deploy/serving_revision_contract.py resolve \
+            --service "$RUNNER_TEMP/service.json" \
+            --tag "$REVISION_TAG" \
+            --github-env "$GITHUB_ENV" \
+            --revision-env NEW_REVISION \
+            --url-env TAGGED_URL \
+            --require-present
 
       - name: Verify tagged revision configuration
         run: |
-          python3 - \
-            "$NEW_REVISION" \
-            "$REVISION_TAG" \
-            "$DEPLOY_DIGEST" \
-            "$PREDICTOR_MODE" \
-            "$MODEL_NAME" \
-            "$MODEL_VERSION" \
-            "$RUNNER_TEMP/service.json" <<'PY'
-          import json
-          import sys
-
-          (
-              expected_revision,
-              expected_tag,
-              expected_digest,
-              expected_mode,
-              expected_name,
-              expected_version,
-              service_path,
-          ) = sys.argv[1:]
-          service = json.load(open(service_path, encoding="utf-8"))
-          status = service.get("status", {})
-          if status.get("latestReadyRevisionName") != expected_revision:
-              raise SystemExit("::error::New revision is not the latest ready revision")
-
-          tagged_target = next(
-              (
-                  target
-                  for target in status.get("traffic", [])
-                  if target.get("tag") == expected_tag
-              ),
-              {},
-          )
-          if tagged_target.get("revisionName") != expected_revision:
-              raise SystemExit("::error::Revision tag does not target the new revision")
-
-          containers = (
-              service.get("spec", {})
-              .get("template", {})
-              .get("spec", {})
-              .get("containers", [])
-          )
-          if not containers or containers[0].get("image") != expected_digest:
-              raise SystemExit("::error::New revision does not use the verified image digest")
-
-          environment = {
-              item.get("name"): item.get("value")
-              for item in containers[0].get("env", [])
-              if item.get("name")
-          }
-          expected_environment = {
-              "ML_PREDICTOR_MODE": expected_mode,
-              "ML_MODEL_NAME": expected_name,
-              "ML_MODEL_VERSION": expected_version,
-          }
-          if any(
-              environment.get(name) != value
-              for name, value in expected_environment.items()
-          ):
-              raise SystemExit("::error::New revision model configuration is incorrect")
-          if "ML_FRAUD_THRESHOLD" in environment:
-              raise SystemExit("::error::Legacy fraud threshold environment remains")
-
-          print("Tagged revision uses the Cloud Build-smoked digest and exact model config.")
-          PY
+          revision_config="$RUNNER_TEMP/tagged-revision.json"
+          gcloud run revisions describe "$NEW_REVISION" \
+            --project="$GCP_PROJECT_ID" \
+            --region="$GCP_REGION" \
+            --format=json > "$revision_config"
+          python3 deploy/serving_revision_contract.py verify \
+            --service "$RUNNER_TEMP/service.json" \
+            --revision "$revision_config" \
+            --expected-revision "$NEW_REVISION" \
+            --expected-tag "$REVISION_TAG" \
+            --expected-digest "$DEPLOY_DIGEST" \
+            --expected-mode "$PREDICTOR_MODE" \
+            --expected-model-name "$MODEL_NAME" \
+            --expected-model-version "$MODEL_VERSION"
 
       - name: Confirm production traffic was not changed
         run: |
@@ -377,23 +374,32 @@ jobs:
             --project="$GCP_PROJECT_ID" \
             --region="$GCP_REGION" \
             --format=json > "$traffic_config"
-          python3 - "$NEW_REVISION" "$traffic_config" <<'PY'
+          python3 - "$APPROVED_REVISION" "$NEW_REVISION" "$traffic_config" <<'PY'
           import json
           import sys
 
-          staged_revision, traffic_path = sys.argv[1:]
+          approved_revision, staged_revision, traffic_path = sys.argv[1:]
           status = json.load(open(traffic_path, encoding="utf-8")).get("status", {})
-          staged_percent = sum(
-              int(target.get("percent", 0) or 0)
-              for target in status.get("traffic", [])
-              if target.get("revisionName") == staged_revision
-          )
-          if staged_percent != 0:
+          latest_ready_revision = status.get("latestReadyRevisionName", "")
+          revision_percent = {}
+          for target in status.get("traffic", []):
+              percent = int(target.get("percent", 0) or 0)
+              if not percent:
+                  continue
+              revision = target.get("revisionName", "")
+              if not revision and target.get("latestRevision"):
+                  revision = latest_ready_revision
+              if revision:
+                  revision_percent[revision] = revision_percent.get(revision, 0) + percent
+
+          if revision_percent != {approved_revision: 100}:
               raise SystemExit(
-                  "::error::Staged revision unexpectedly received production traffic"
+                  "::error::Production traffic changed while staging the revision: "
+                  f"{revision_percent}"
               )
           print(
-              "Revision is Ready at 0% traffic. Use the Backend approval and smoke "
+              f"Revision {staged_revision} is Ready at 0% traffic and production "
+              f"remains on {approved_revision}. Use the Backend approval and smoke "
               "workflow for production promotion."
           )
           PY

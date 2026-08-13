@@ -171,7 +171,7 @@ MLflow에 저장합니다. 같은 model80 계약의 현재 champion이 있으면
 | `BACKEND_TRAINING_RUN_ID` | Backend가 만든 학습 실행 ID |
 | `TRAINING_RESULT_CALLBACK_URL` | 학습 결과 Callback 주소 |
 | `TRAINING_RESULT_CALLBACK_TOKEN` | Secret Manager로 주입할 Callback Token |
-| `MLFLOW_TRACKING_URI` | MLflow Tracking Server |
+| `MLFLOW_TRACKING_URI` | GitHub Repository Variable에서 일반 환경변수로 주입할 MLflow Tracking Server URI |
 | `MLFLOW_TRACKING_USERNAME` | Secret Manager로 주입할 계정 |
 | `MLFLOW_TRACKING_PASSWORD` | Secret Manager로 주입할 비밀번호 |
 
@@ -180,9 +180,43 @@ MLflow에 저장합니다. 같은 model80 계약의 현재 champion이 있으면
 관리자가 승인합니다.
 
 Training 이미지는 `Dockerfile.training`과 `cloudbuild.training.yaml`로 만들며,
-배포 Workflow는 Cloud Run Job의 이미지 digest, `TRAINING_DATA_URI`, 등록 모델명을
-갱신하고 구형 실행 환경변수를 제거합니다. 이미지 배포 자체가 학습 실행이나 모델
-승인을 수행하지는 않습니다.
+CI와 Cloud Build는 컨테이너를 실제 실행해 `fdshield_ml.training_job` 진입점까지
+도달하는지 확인합니다. 필수 설정을 주입하지 않은 smoke에서 종료 코드 `2`와
+`training_job_configuration_error`가 확인되어야 이미지 빌드가 통과합니다.
+
+배포 Workflow에는 다음 GitHub Repository Variable이 필요합니다.
+
+| Variable | 용도 |
+|---|---|
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | GitHub OIDC Workload Identity Provider |
+| `GCP_SERVICE_ACCOUNT` | 배포 Workflow가 impersonate할 서비스 계정 |
+| `TRAINING_JOB_SERVICE_ACCOUNT` | GCS·Secret Manager에 최소 권한을 가진 Training 전용 실행 계정 |
+| `TRAINING_DATA_URI` | 버전이 고정된 비공개 GCS CSV URI |
+| `TRAINING_RESULT_CALLBACK_URL` | `{training_run_id}`를 포함한 HTTPS Callback 주소 |
+| `MLFLOW_TRACKING_URI` | 자격 증명을 포함하지 않은 MLflow HTTP(S) 주소 |
+| `MLFLOW_TRACKING_USERNAME_SECRET` | MLflow 계정이 저장된 Secret 이름 |
+| `MLFLOW_TRACKING_PASSWORD_SECRET` | MLflow 비밀번호가 저장된 Secret 이름 |
+| `TRAINING_RESULT_CALLBACK_TOKEN_SECRET` | Backend Callback Token이 저장된 Secret 이름 |
+
+Workflow는 `MLFLOW_TRACKING_URI`를 일반 Cloud Run 환경변수로 설정합니다. URI는
+HTTP(S) 주소만 허용하고 사용자명·비밀번호, query, fragment, 공백과 쉼표를
+거절합니다. `MLFLOW_TRACKING_USERNAME`, `MLFLOW_TRACKING_PASSWORD`,
+`TRAINING_RESULT_CALLBACK_TOKEN`만 Secret Manager의 `latest` 버전으로 연결합니다.
+Secret 값은 GitHub에 저장하거나 배포 로그에 출력하지 않으며, 배포 후에는 값이 아닌
+Secret 참조 구조만 검사합니다. Secret 생성·값 변경은 Workflow가 수행하지 않습니다.
+
+기존 Job의 `MLFLOW_TRACKING_URI`가 Secret 참조이면 먼저 해당 참조를 별도 update로
+제거한 뒤 일반 URI를 설정합니다. 반대로 사용자명·비밀번호·Callback Token이 평문
+환경변수이면 해당 binding을 먼저 제거한 뒤 Secret 참조를 주입합니다. 서로 다른
+타입의 binding을 한 update에서 교체하지 않으며, 배포 Workflow는 Job을 자동 실행하지
+않습니다.
+
+배포 시 이미지 digest, 전용 서비스 계정, 학습 데이터·실험명·등록 모델명·Callback
+주소를 갱신합니다. 과거 Job의 command/args override는 빈 값으로 초기화해 이미지의
+`CMD ["python", "-m", "fdshield_ml.training_job"]`를 사용하도록 강제합니다. 이후
+이미지 digest, command/args, 서비스 계정, 일반 환경변수, Secret 참조, 구형 환경변수
+부재를 다시 검사합니다. 이미지 배포 자체가 학습 실행이나 모델 승인을 수행하지는
+않습니다.
 
 ## Serving
 
@@ -211,7 +245,20 @@ Serving은 alias가 아닌 정확한 Registry 버전을 로드합니다. GitHub�
 `ML Serving Cloud Run CD`는 자동 실행되지 않으며, `model_name`과
 `model_version`을 입력해 수동 실행합니다. 이 Workflow는 새 이미지를 빌드하고
 Cloud Build에서 실제 추론을 검증한 뒤 Cloud Run revision을 **트래픽 0%**로만
-준비합니다. 운영 트래픽 전환은 하지 않습니다.
+준비합니다. revision tag는 Backend 계약과 동일한 `model-v<model_version>`이며,
+운영 트래픽 전환은 하지 않습니다.
+
+동일한 모델 버전으로 Workflow를 재실행했을 때 기존 tag가 최신 Ready revision,
+검증된 image digest, 정확한 모델 환경변수, 트래픽 0%를 모두 만족하면 해당 revision을
+그대로 재사용합니다. 하나라도 다르면 tag를 다른 revision으로 옮기지 않고 배포를
+실패시킵니다. 따라서 다른 코드나 모델 설정을 준비하려면 새 모델 버전을 사용해야
+합니다.
+
+기존 active revision에서 이어받는 `MLFLOW_TRACKING_URI`는 HTTP(S) origin 또는
+origin 뒤 path만 허용합니다. URL 안의 사용자명·비밀번호, query, fragment는 배포
+전에 거절하며 MLflow 자격 증명은 별도의 Secret Manager 참조로만 전달합니다.
+candidate는 최신 created 및 최신 Ready revision이어야 하고, Service와 revision의
+generation 관찰 및 `Ready=True`까지 끝나야 Backend 승인 대상으로 인정됩니다.
 
 ### API
 

@@ -8,6 +8,7 @@ on:
       - ".dockerignore"
       - "Dockerfile.training"
       - "cloudbuild.training.yaml"
+      - "deploy/validate_training_job_contract.py"
       - "pyproject.toml"
       - "uv.lock"
       - "fdshield_ml/__init__.py"
@@ -16,6 +17,7 @@ on:
       - "fdshield_ml/service/**"
       - "fdshield_ml/local_train.py"
       - "fdshield_ml/training_job.py"
+      - "tests/test_training_deploy_contract.py"
   workflow_dispatch:
 
 permissions:
@@ -31,7 +33,16 @@ env:
   GCP_REGION: asia-northeast3
   CLOUD_RUN_JOB: fdshield-binary-training
   IMAGE_NAME: asia-northeast3-docker.pkg.dev/project-4cc3406c-72d8-4907-a5d/fdshield/ml-training
+  WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+  DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+  TRAINING_JOB_SERVICE_ACCOUNT: ${{ vars.TRAINING_JOB_SERVICE_ACCOUNT }}
   TRAINING_DATA_URI: ${{ vars.TRAINING_DATA_URI }}
+  TRAINING_RESULT_CALLBACK_URL: ${{ vars.TRAINING_RESULT_CALLBACK_URL }}
+  MLFLOW_TRACKING_URI: ${{ vars.MLFLOW_TRACKING_URI }}
+  MLFLOW_TRACKING_USERNAME_SECRET: ${{ vars.MLFLOW_TRACKING_USERNAME_SECRET }}
+  MLFLOW_TRACKING_PASSWORD_SECRET: ${{ vars.MLFLOW_TRACKING_PASSWORD_SECRET }}
+  TRAINING_RESULT_CALLBACK_TOKEN_SECRET: ${{ vars.TRAINING_RESULT_CALLBACK_TOKEN_SECRET }}
+  MLFLOW_EXPERIMENT_NAME: fdshield-binary-training
   REGISTERED_MODEL_NAME: fdshield-fraud-detector-v2
 
 jobs:
@@ -41,6 +52,70 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+
+      - name: Validate deployment variables
+        run: |
+          required_variables=(
+            WORKLOAD_IDENTITY_PROVIDER
+            DEPLOY_SERVICE_ACCOUNT
+            TRAINING_JOB_SERVICE_ACCOUNT
+            TRAINING_DATA_URI
+            TRAINING_RESULT_CALLBACK_URL
+            MLFLOW_TRACKING_URI
+            MLFLOW_TRACKING_USERNAME_SECRET
+            MLFLOW_TRACKING_PASSWORD_SECRET
+            TRAINING_RESULT_CALLBACK_TOKEN_SECRET
+          )
+          for variable_name in "${required_variables[@]}"; do
+            if [[ -z "${!variable_name}" ]]; then
+              echo "::error::Required repository variable is empty: $variable_name"
+              exit 1
+            fi
+          done
+
+          if [[ "$TRAINING_JOB_SERVICE_ACCOUNT" != *@*.iam.gserviceaccount.com ]]; then
+            echo "::error::TRAINING_JOB_SERVICE_ACCOUNT must be a service account email."
+            exit 1
+          fi
+          if [[ "$TRAINING_JOB_SERVICE_ACCOUNT" == *-compute@developer.gserviceaccount.com ]]; then
+            echo "::error::TRAINING_JOB_SERVICE_ACCOUNT must be a dedicated service account."
+            exit 1
+          fi
+          if [[ "$TRAINING_DATA_URI" != gs://*/*.csv ]]; then
+            echo "::error::TRAINING_DATA_URI must be a gs:// CSV URI."
+            exit 1
+          fi
+          if [[ "$TRAINING_RESULT_CALLBACK_URL" != https://* ]] || \
+             [[ "$TRAINING_RESULT_CALLBACK_URL" != *"{training_run_id}"* ]]; then
+            echo "::error::TRAINING_RESULT_CALLBACK_URL must be HTTPS and include {training_run_id}."
+            exit 1
+          fi
+
+          python3 - <<'PY'
+          import os
+
+          from deploy.validate_training_job_contract import (
+              is_plain_mlflow_tracking_uri,
+          )
+
+          if not is_plain_mlflow_tracking_uri(os.environ["MLFLOW_TRACKING_URI"]):
+              raise SystemExit(
+                  "::error::MLFLOW_TRACKING_URI must be a plain HTTP(S) URL "
+                  "without credentials, query, fragment, whitespace, or commas."
+              )
+          PY
+
+          secret_variables=(
+            MLFLOW_TRACKING_USERNAME_SECRET
+            MLFLOW_TRACKING_PASSWORD_SECRET
+            TRAINING_RESULT_CALLBACK_TOKEN_SECRET
+          )
+          for variable_name in "${secret_variables[@]}"; do
+            if [[ "${!variable_name}" == *[[:space:],:]* ]]; then
+              echo "::error::$variable_name must contain one Secret Manager secret name without a version."
+              exit 1
+            fi
+          done
 
       - name: Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
@@ -58,8 +133,8 @@ jobs:
         uses: google-github-actions/auth@v3
         with:
           project_id: ${{ env.GCP_PROJECT_ID }}
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
 
       - name: Install Google Cloud CLI
         uses: google-github-actions/setup-gcloud@v3
@@ -133,18 +208,90 @@ jobs:
           echo "DEPLOY_DIGEST=$deploy_digest" >> "$GITHUB_ENV"
           echo "Training image digest: $deploy_digest"
 
+      - name: Migrate Cloud Run environment binding types
+        run: |
+          migration_job_config="$RUNNER_TEMP/training-job-before-secret-migration.json"
+          gcloud run jobs describe "$CLOUD_RUN_JOB" \
+            --project="$GCP_PROJECT_ID" \
+            --region="$GCP_REGION" \
+            --format=json > "$migration_job_config"
+
+          migration_bindings="$(python3 - "$migration_job_config" <<'PY'
+          import json
+          import sys
+
+          secret_environment_names = {
+              "MLFLOW_TRACKING_USERNAME",
+              "MLFLOW_TRACKING_PASSWORD",
+              "TRAINING_RESULT_CALLBACK_TOKEN",
+          }
+          job = json.load(open(sys.argv[1], encoding="utf-8"))
+          spec = job.get("spec", {})
+          for key in ("template", "spec", "template", "spec"):
+              spec = spec.get(key, {})
+          containers = spec.get("containers", [])
+          environment = containers[0].get("env", []) if containers else []
+          literal_names = sorted(
+              item.get("name")
+              for item in environment
+              if isinstance(item, dict)
+              and item.get("name") in secret_environment_names
+              and "value" in item
+              and "valueFrom" not in item
+          )
+          tracking_uri = next(
+              (
+                  item
+                  for item in environment
+                  if isinstance(item, dict)
+                  and item.get("name") == "MLFLOW_TRACKING_URI"
+              ),
+              {},
+          )
+          secret_uri_name = (
+              "MLFLOW_TRACKING_URI" if "valueFrom" in tracking_uri else ""
+          )
+          print(f"{secret_uri_name}|{','.join(literal_names)}")
+          PY
+          )"
+
+          secret_uri_env="${migration_bindings%%|*}"
+          literal_secret_envs="${migration_bindings#*|}"
+
+          if [[ -n "$secret_uri_env" ]]; then
+            echo "Removing the legacy Secret Manager binding for MLFLOW_TRACKING_URI before literal URI migration."
+            gcloud run jobs update "$CLOUD_RUN_JOB" \
+              --project="$GCP_PROJECT_ID" \
+              --region="$GCP_REGION" \
+              --remove-secrets="$secret_uri_env" \
+              --quiet
+          else
+            echo "MLFLOW_TRACKING_URI does not require Secret-to-literal migration."
+          fi
+
+          if [[ -n "$literal_secret_envs" ]]; then
+            echo "Removing legacy literal credential bindings before Secret Manager migration: $literal_secret_envs"
+            gcloud run jobs update "$CLOUD_RUN_JOB" \
+              --project="$GCP_PROJECT_ID" \
+              --region="$GCP_REGION" \
+              --remove-env-vars="$literal_secret_envs" \
+              --quiet
+          else
+            echo "No legacy literal credential bindings require migration."
+          fi
+
       - name: Update Cloud Run Training Job image
         run: |
-          if [[ "$TRAINING_DATA_URI" != gs://*/*.csv ]]; then
-            echo "::error::Repository variable TRAINING_DATA_URI must be a gs:// CSV URI."
-            exit 1
-          fi
           gcloud run jobs update "$CLOUD_RUN_JOB" \
             --project="$GCP_PROJECT_ID" \
             --region="$GCP_REGION" \
             --image="$DEPLOY_DIGEST" \
-            --remove-env-vars="MLFLOW_AUTO_PROMOTE,TRAINING_JOB_TYPE,TRAINING_MODE,TRAINING_TRANSACTIONS_URI,TRAINING_SPLIT_DATETIME" \
-            --update-env-vars="TRAINING_DATA_URI=$TRAINING_DATA_URI,MLFLOW_REGISTERED_MODEL_NAME=$REGISTERED_MODEL_NAME" \
+            --command="" \
+            --args="" \
+            --service-account="$TRAINING_JOB_SERVICE_ACCOUNT" \
+            --remove-env-vars="MLFLOW_AUTO_PROMOTE,TRAINING_JOB_TYPE,TRAINING_MODE,TRAINING_TRANSACTIONS_URI,TRAINING_SPLIT_DATETIME,BACKEND_TRAINING_RUN_ID" \
+            --update-env-vars="TRAINING_DATA_URI=$TRAINING_DATA_URI,MLFLOW_EXPERIMENT_NAME=$MLFLOW_EXPERIMENT_NAME,MLFLOW_REGISTERED_MODEL_NAME=$REGISTERED_MODEL_NAME,MLFLOW_TRACKING_URI=$MLFLOW_TRACKING_URI,TRAINING_RESULT_CALLBACK_URL=$TRAINING_RESULT_CALLBACK_URL" \
+            --update-secrets="MLFLOW_TRACKING_USERNAME=$MLFLOW_TRACKING_USERNAME_SECRET:latest,MLFLOW_TRACKING_PASSWORD=$MLFLOW_TRACKING_PASSWORD_SECRET:latest,TRAINING_RESULT_CALLBACK_TOKEN=$TRAINING_RESULT_CALLBACK_TOKEN_SECRET:latest" \
             --quiet
 
       - name: Verify configured Training Job image
@@ -168,60 +315,17 @@ jobs:
             --project="$GCP_PROJECT_ID" \
             --region="$GCP_REGION" \
             --format=json > "$job_config"
-          python3 - "$job_config" "$TRAINING_DATA_URI" "$REGISTERED_MODEL_NAME" <<'PY'
-          import json
-          import sys
-
-          job = json.load(open(sys.argv[1], encoding="utf-8"))
-          expected_data_uri, expected_model_name = sys.argv[2:]
-          containers = (
-              job.get("spec", {})
-              .get("template", {})
-              .get("spec", {})
-              .get("template", {})
-              .get("spec", {})
-              .get("containers", [])
-          )
-          environment_names = {
-              item.get("name")
-              for container in containers
-              for item in container.get("env", [])
-          }
-          legacy_environment = {
-              "MLFLOW_AUTO_PROMOTE",
-              "TRAINING_JOB_TYPE",
-              "TRAINING_MODE",
-              "TRAINING_TRANSACTIONS_URI",
-              "TRAINING_SPLIT_DATETIME",
-          }
-          remaining_legacy = sorted(legacy_environment & environment_names)
-          if remaining_legacy:
-              raise SystemExit(
-                  "::error::Legacy training environment remains: "
-                  + ", ".join(remaining_legacy)
-              )
-          environment = {
-              item.get("name"): item.get("value")
-              for container in containers
-              for item in container.get("env", [])
-              if item.get("name")
-          }
-          expected = {
-              "TRAINING_DATA_URI": expected_data_uri,
-              "MLFLOW_REGISTERED_MODEL_NAME": expected_model_name,
-          }
-          mismatches = {
-              name: environment.get(name)
-              for name, value in expected.items()
-              if environment.get(name) != value
-          }
-          if mismatches:
-              raise SystemExit(
-                  "::error::Training contract environment mismatch: "
-                  + repr(mismatches)
-              )
-          print("Legacy environment is absent and train1/model80 contract is active.")
-          PY
+          python3 deploy/validate_training_job_contract.py "$job_config" \
+            --expected-image "$DEPLOY_DIGEST" \
+            --expected-data-uri "$TRAINING_DATA_URI" \
+            --expected-model-name "$REGISTERED_MODEL_NAME" \
+            --expected-experiment-name "$MLFLOW_EXPERIMENT_NAME" \
+            --expected-callback-url "$TRAINING_RESULT_CALLBACK_URL" \
+            --expected-service-account "$TRAINING_JOB_SERVICE_ACCOUNT" \
+            --expected-mlflow-tracking-uri "$MLFLOW_TRACKING_URI" \
+            --expected-mlflow-tracking-username-secret "$MLFLOW_TRACKING_USERNAME_SECRET" \
+            --expected-mlflow-tracking-password-secret "$MLFLOW_TRACKING_PASSWORD_SECRET" \
+            --expected-callback-token-secret "$TRAINING_RESULT_CALLBACK_TOKEN_SECRET"
 
           echo "Cloud Run Training Job image updated: $configured_image"
           echo "The Training Job was not executed by this deployment."
