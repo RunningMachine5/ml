@@ -6,18 +6,18 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from fdshield_ml.common.preprocess_config import (
+from fdshield_ml import serving as serving_app
+from fdshield_ml.config.preprocess_config import (
     MODEL_FEATURE_COLUMNS,
     MODEL_INPUT_COLUMNS,
     SERVING_INPUT_COLUMNS,
 )
-from fdshield_ml.serving import app as serving_app
-from fdshield_ml.serving.app import create_app
-from fdshield_ml.serving.dto.predict_input import PredictInputDTO
-from fdshield_ml.serving.service.predict.predict_service import (
+from fdshield_ml.dto.predict_input import PredictInputDTO
+from fdshield_ml.service.predict.predict_service import (
     PredictionServiceError,
     PredictService,
 )
+from fdshield_ml.serving import create_app
 
 RawFeaturesFactory = Callable[..., dict[str, object]]
 

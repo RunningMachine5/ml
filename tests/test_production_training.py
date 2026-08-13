@@ -9,11 +9,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from fdshield_ml.common.preprocess_config import RAW_TRAINING_INPUT_COLUMNS
-from fdshield_ml.common.xgboost_prediction import prediction_iteration_range
-from fdshield_ml.training.dataset import TRAINING_DATA_CONTRACT
-from fdshield_ml.training.integrations import mlflow as mlflow_integration
-from fdshield_ml.training.service.train import model_training, train_service
+from fdshield_ml.config.preprocess_config import RAW_TRAINING_INPUT_COLUMNS
+from fdshield_ml.infrastructure import mlflow as mlflow_integration
+from fdshield_ml.infrastructure import training_pipeline
+from fdshield_ml.service.train import model_training
+from fdshield_ml.service.train.dataset import TRAINING_DATA_CONTRACT
+from fdshield_ml.service.xgboost_prediction import prediction_iteration_range
 
 RawFeaturesFactory = Callable[..., dict[str, object]]
 
@@ -96,19 +97,17 @@ def _install_fake_mlflow(
 
 def test_production_training_config_rejects_invalid_gate() -> None:
     with pytest.raises(ValueError, match="minimum_pr_auc"):
-        train_service.ProductionTrainingConfig(
+        training_pipeline.ProductionTrainingConfig(
             registered_model_name="fdshield-fraud-detector-v2",
             minimum_pr_auc=1.1,
         )
 
 
 def test_received_training_defaults_and_manual_review_contract() -> None:
-    config = train_service.ProductionTrainingConfig(
+    config = training_pipeline.ProductionTrainingConfig(
         registered_model_name="fdshield-fraud-detector-v2"
     )
-    params = model_training.build_classifier(
-        config.model_training_config()
-    ).get_params()
+    params = model_training.build_classifier(config.model).get_params()
 
     assert model_training.VALIDATION_FRACTION == pytest.approx(0.2)
     assert model_training.DECISION_THRESHOLD == pytest.approx(0.5)
@@ -128,7 +127,7 @@ def test_received_training_defaults_and_manual_review_contract() -> None:
     assert params["random_state"] == 42
     assert params["n_jobs"] == -1
     assert (
-        train_service.promotion_recommendation(
+        training_pipeline.promotion_recommendation(
             {"validation_pr_auc": 0.9},
             None,
             validation_passed=True,
@@ -174,17 +173,19 @@ def test_train1_registers_candidate_with_comparison_metadata(
         recording_predict_proba,
     )
 
-    result = train_service.ml_train_flow(
+    result = training_pipeline.run_production_training(
         source,
         "fdshield-binary-training",
-        train_service.ProductionTrainingConfig(
+        training_pipeline.ProductionTrainingConfig(
             registered_model_name="fdshield-fraud-detector-v2",
             minimum_pr_auc=0.0,
             minimum_recall=0.0,
-            n_estimators=2,
-            max_depth=2,
-            early_stopping_rounds=1,
-            n_jobs=1,
+            model=model_training.ModelTrainingConfig(
+                n_estimators=2,
+                max_depth=2,
+                early_stopping_rounds=1,
+                n_jobs=1,
+            ),
         ),
     )
 
@@ -321,7 +322,7 @@ def test_recommendation_requires_relative_improvement_without_guardrail_regressi
     }
 
     assert (
-        train_service.promotion_recommendation(
+        training_pipeline.promotion_recommendation(
             {
                 "validation_pr_auc": 0.91,
                 "validation_recall": 0.86,
@@ -333,7 +334,7 @@ def test_recommendation_requires_relative_improvement_without_guardrail_regressi
         == "RECOMMENDED"
     )
     assert (
-        train_service.promotion_recommendation(
+        training_pipeline.promotion_recommendation(
             {
                 "validation_pr_auc": 0.91,
                 "validation_recall": 0.80,
@@ -345,7 +346,7 @@ def test_recommendation_requires_relative_improvement_without_guardrail_regressi
         == "REVIEW_REQUIRED"
     )
     assert (
-        train_service.promotion_recommendation(
+        training_pipeline.promotion_recommendation(
             {
                 "validation_pr_auc": 0.89,
                 "validation_recall": 0.90,

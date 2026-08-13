@@ -10,17 +10,17 @@ from urllib.error import HTTPError, URLError
 
 import pytest
 
-from fdshield_ml.training.job import (
+from fdshield_ml.infrastructure.training_pipeline import (
+    ProductionTrainingConfig,
+    ProductionTrainingError,
+    ProductionTrainingResult,
+)
+from fdshield_ml.training_job import (
     DEFAULT_REGISTERED_MODEL_NAME,
     TrainingJobConfig,
     TrainingResultNotificationError,
     main,
     notify_training_result,
-)
-from fdshield_ml.training.service.train.train_service import (
-    ProductionTrainingConfig,
-    ProductionTrainingError,
-    ProductionTrainingResult,
 )
 
 VALID_ENV = {

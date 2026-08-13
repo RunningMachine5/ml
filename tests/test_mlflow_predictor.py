@@ -6,11 +6,11 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from fdshield_ml.common.preprocess_config import MODEL_FEATURE_COLUMNS
-from fdshield_ml.serving.dto.predict_input import PredictInputDTO
-from fdshield_ml.serving.integrations import mlflow_model
-from fdshield_ml.serving.integrations.mlflow_model import load_mlflow_predict_service
-from fdshield_ml.serving.service.predict.predict_service import (
+from fdshield_ml.config.preprocess_config import MODEL_FEATURE_COLUMNS
+from fdshield_ml.dto.predict_input import PredictInputDTO
+from fdshield_ml.infrastructure import model_loader as mlflow_model
+from fdshield_ml.infrastructure.model_loader import load_mlflow_predict_service
+from fdshield_ml.service.predict.predict_service import (
     PredictionServiceError,
     PredictService,
 )

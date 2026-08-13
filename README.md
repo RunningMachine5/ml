@@ -17,7 +17,7 @@ GCS, Cloud Run Job, MLflow Registry, Backend Callback, 관리자 수동 승인 �
 | Registry 모델명 | `fdshield-fraud-detector-v2` |
 | 로컬 모델 번들 | `models/fdshield-fraud-detector-v2` |
 
-학습과 추론은 모두 `fdshield_ml/common/preprocessor.py`의 같은 raw59 전처리를
+학습과 추론은 모두 `fdshield_ml/service/preprocessor.py`의 같은 raw59 전처리를
 사용합니다. `transaction_id`는 응답 연결용이며 model80에 들어가지 않습니다.
 학습 raw64는 raw60의 flag 컬럼명만 CSV 별칭인
 `flag_deposit_more_than_tenmillion`으로 교체하고, `customer_id`,
@@ -35,19 +35,22 @@ CSV는 수정하지 않습니다.
 
 ```text
 fdshield_ml/
-├── common/                         # 계약·전처리·임계값·XGBoost 공용 로직
-│   ├── preprocess_config.py          # raw60/raw64/model80 컬럼 계약
-│   └── preprocessor.py               # 학습·추론 공용 raw59 -> model80
-├── serving/                        # FastAPI 실시간 추론 서버
-│   ├── api/ml_input.py               # /ml/predict 라우트
-│   ├── dto/                          # PredictInputDTO, PredictResultDTO
-│   ├── service/predict/              # 전처리·예측·SHAP 흐름
-│   └── integrations/                 # 로컬·MLflow 모델 로딩
-└── training/                       # train1 학습 Cloud Run Job
-    ├── dataset.py, data_loader.py      # raw64 검증·로컬/GCS 로딩
-    ├── service/train/                  # XGBoost 학습·MLflow 등록 흐름
-    ├── integrations/                   # MLflow, Backend Callback
-    └── job.py                          # 학습 Job 실행 진입점
+├── config/preprocess_config.py      # raw60/raw64/model80 컬럼 계약
+├── dto/                              # PredictInputDTO, PredictResultDTO
+├── service/                          # ML 담당자가 주로 수정하는 핵심 코드
+│   ├── preprocessor.py               # 학습·추론 공용 raw59 -> model80
+│   ├── predict/                      # 확률·SHAP·예측 흐름
+│   └── train/                        # raw64 검증·XGBoost 학습 흐름
+├── infrastructure/                   # 운영 환경 연동
+│   ├── data_source.py                # 로컬·GCS 학습 데이터
+│   ├── model_loader.py               # 로컬·MLflow 고정 모델 로딩
+│   ├── mlflow.py                     # 성능 비교·후보 Registry 등록
+│   ├── training_pipeline.py          # core 학습과 MLflow 운영 조립
+│   └── backend_callback.py           # 학습 결과 Callback
+├── api/ml_input.py                   # /ml/predict 라우트
+├── serving.py                        # FastAPI/Cloud Run Serving 진입점
+├── training_job.py                   # Cloud Run Training Job 진입점
+└── local_train.py                    # MLflow 없는 로컬 학습 명령
 
 models/fdshield-fraud-detector-v2/  # 전달 모델 기반 로컬 candidate
 data/open/train1.csv                # 로컬 학습 파일, Git 제외
@@ -55,18 +58,17 @@ data/open/train1.csv                # 로컬 학습 파일, Git 제외
 
 ### 처음 보는 순서
 
-1. `common/preprocess_config.py`에서 raw60·raw64·model80 컬럼 계약을 확인합니다.
-2. `common/preprocessor.py`에서 학습과 추론이 공유하는 변환을 확인합니다.
-3. 실시간 추론은 `serving/app.py` → `serving/api/ml_input.py` →
-   `serving/service/predict/predict_service.py` 순으로 읽습니다. 모델 로딩은
-   `serving/integrations/`에 있습니다.
-4. 학습은 `training/dataset.py` → `training/service/train/model_training.py` →
-   `training/service/train/train_service.py` → `training/job.py` 순으로 읽습니다.
-5. GCS 로딩은 `training/data_loader.py`, MLflow·Backend Callback은
-   `training/integrations/`에서 확인합니다.
+1. `config/preprocess_config.py`에서 raw60·raw64·model80 컬럼 계약을 확인합니다.
+2. `service/preprocessor.py`에서 학습과 추론이 공유하는 변환을 확인합니다.
+3. 실시간 추론은 `serving.py` → `api/ml_input.py` →
+   `service/predict/predict_service.py` 순으로 읽습니다.
+4. 학습은 `service/train/dataset.py` → `service/train/model_training.py` →
+   `service/train/train_service.py` → `training_job.py` 순으로 읽습니다.
+5. GCS·MLflow·Backend Callback·모델 로딩은 `infrastructure/`에서 확인합니다.
 
-`common` 모듈은 학습과 추론에서 같은 계약을 사용하도록 유지합니다.
-`serving`과 `training`의 외부 연동은 각 패키지의 `integrations`에 분리합니다.
+ML 계산 코드는 `service/`, 배포 환경과 연결되는 코드는 `infrastructure/`에
+분리합니다. 따라서 전처리와 모델 학습을 수정할 때 Cloud Run이나 Callback
+구현을 따라갈 필요가 없습니다.
 
 ## 개발 환경
 
@@ -102,6 +104,24 @@ cp '<전달 폴더>/app/datas/train1.csv' ./data/open/train1.csv
 CSV는 Git과 Docker 이미지에 포함하지 않습니다. 운영에서는 같은 파일을 비공개
 GCS의 버전 고정 경로에 업로드하고 SHA-256을 확인한 뒤 `TRAINING_DATA_URI`에
 `gs://` URI를 넣습니다.
+
+### MLflow 없이 로컬에서 학습하기
+
+전처리나 XGBoost 설정을 실험할 때는 GCS·MLflow·Backend Callback 설정 없이
+같은 core 학습 함수를 실행할 수 있습니다.
+
+```powershell
+uv run python -m fdshield_ml.local_train `
+  --data data/open/train1.csv `
+  --output-dir models/local-training-output `
+  --model-name fdshield-fraud-detector-v2 `
+  --model-version 1
+```
+
+결과 폴더에 `model.json`, `manifest.json`, `metrics.json`이 생성되고,
+저장 직후 실제 Serving loader로 모델 해시·model80 Feature 순서·판정 임계값을
+검증합니다. 기존 파일을 덮어쓰지 않도록 출력 폴더가 비어 있지 않으면
+실행을 거절합니다.
 
 ## Training Job
 

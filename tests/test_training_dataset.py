@@ -5,11 +5,11 @@ from collections.abc import Callable
 import pandas as pd
 import pytest
 
-from fdshield_ml.common.preprocess_config import (
+from fdshield_ml.config.preprocess_config import (
     RAW_TRAINING_INPUT_COLUMNS,
     TRAINING_INPUT_COLUMNS,
 )
-from fdshield_ml.training.dataset import (
+from fdshield_ml.service.train.dataset import (
     LABEL_COLUMN,
     TRAINING_DATA_CONTRACT,
     TrainingDatasetError,

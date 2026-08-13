@@ -11,8 +11,11 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - "fdshield_ml/__init__.py"
-      - "fdshield_ml/common/**"
-      - "fdshield_ml/training/**"
+      - "fdshield_ml/config/**"
+      - "fdshield_ml/infrastructure/**"
+      - "fdshield_ml/service/**"
+      - "fdshield_ml/local_train.py"
+      - "fdshield_ml/training_job.py"
 
 permissions:
   contents: read

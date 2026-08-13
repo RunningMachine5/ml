@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from fdshield_ml.common.preprocess_config import (
+from fdshield_ml.config.preprocess_config import (
     CATEGORICAL_LEVELS,
     MODEL_FEATURE_COLUMNS,
     MODEL_INPUT_COLUMNS,
@@ -14,7 +14,7 @@ from fdshield_ml.common.preprocess_config import (
     SERVING_INPUT_COLUMNS,
     TRAINING_INPUT_COLUMNS,
 )
-from fdshield_ml.common.preprocessor import (
+from fdshield_ml.service.preprocessor import (
     FeaturePreprocessingError,
     preprocess_frame,
     preprocess_transaction_features,

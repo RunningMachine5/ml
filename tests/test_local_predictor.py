@@ -9,14 +9,14 @@ from pathlib import Path
 
 import pytest
 
-from fdshield_ml.serving.dto.predict_input import PredictInputDTO
-from fdshield_ml.serving.integrations import predict_service_from_environment
-from fdshield_ml.serving.integrations.local_model import (
+from fdshield_ml.dto.predict_input import PredictInputDTO
+from fdshield_ml.infrastructure.model_loader import (
     DEFAULT_LOCAL_MODEL_PATH,
     load_local_predict_service,
     load_local_predict_service_from_environment,
+    predict_service_from_environment,
 )
-from fdshield_ml.serving.service.predict.predict_service import (
+from fdshield_ml.service.predict.predict_service import (
     PredictionServiceError,
     PredictService,
 )

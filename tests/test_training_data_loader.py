@@ -8,8 +8,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from fdshield_ml.common.preprocess_config import RAW_TRAINING_INPUT_COLUMNS
-from fdshield_ml.training.data_loader import (
+from fdshield_ml.config.preprocess_config import RAW_TRAINING_INPUT_COLUMNS
+from fdshield_ml.infrastructure.data_source import (
     GCSObjectLocation,
     data_source_type,
     materialize_training_data,
