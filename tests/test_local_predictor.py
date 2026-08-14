@@ -9,7 +9,11 @@ from pathlib import Path
 
 import pytest
 
-from fdshield_ml.dto.predict_input import PredictInputDTO
+from fdshield_ml.dto.predict_input import (
+    CUSTOMER_FEATURE_DEFAULTS,
+    DERIVED_FEATURE_DEFAULTS,
+    PredictInputDTO,
+)
 from fdshield_ml.infrastructure.model_loader import (
     DEFAULT_LOCAL_MODEL_PATH,
     load_local_predict_service,
@@ -68,6 +72,25 @@ def test_bundled_model80_predicts_with_pr118_compatible_missing_values(
     assert result.model_name == "fdshield-fraud-detector-v2"
     assert result.model_version == "1"
     assert result.predict_result == int(result.predict_proba >= 0.5)
+    assert 0.0 <= result.predict_proba <= 1.0
+    assert len(result.shap_values) == 56
+
+
+def test_bundled_model80_predicts_without_customer_and_derived_features(
+    raw_features_factory: RawFeaturesFactory,
+) -> None:
+    """임시 기본값이 테스트 모델이 아닌 실제 XGBoost에서도 동작한다."""
+
+    raw_features = raw_features_factory()
+    for field_name in (*CUSTOMER_FEATURE_DEFAULTS, *DERIVED_FEATURE_DEFAULTS):
+        raw_features.pop(field_name)
+    raw_features.pop("recipient_account_number")
+
+    request = PredictInputDTO.model_validate({"transaction_id": 1003, **raw_features})
+    result = load_local_predict_service(DEFAULT_LOCAL_MODEL_PATH).predict(request)
+
+    assert result.model_name == "fdshield-fraud-detector-v2"
+    assert result.model_version == "1"
     assert 0.0 <= result.predict_proba <= 1.0
     assert len(result.shap_values) == 56
 
