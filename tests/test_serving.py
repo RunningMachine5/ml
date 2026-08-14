@@ -121,6 +121,112 @@ def test_ml_predict_rejects_missing_features() -> None:
     assert response.status_code == 422
 
 
+def test_ml_predict_fills_missing_derived_features(
+    raw_features_factory: RawFeaturesFactory,
+) -> None:
+    """원천값은 유지하고 아직 계산되지 않은 파생값만 기본값으로 채운다."""
+
+    derived_fields = {
+        "customer_flag_change_of_authentication_1",
+        "customer_flag_change_of_authentication_2",
+        "customer_flag_change_of_authentication_3",
+        "customer_flag_change_of_authentication_4",
+        "customer_inquery_atm_limit",
+        "customer_increase_atm_limit",
+        "account_release_suspention",
+        "account_one_month_max_amount",
+        "account_one_month_std_dev",
+        "account_dawn_one_month_max_amount",
+        "account_dawn_one_month_std_dev",
+        "distance",
+        "time_difference",
+        "unused_terminal_status",
+        "last_atm_transaction_datetime",
+        "last_bank_branch_transaction_datetime",
+        "flag_deposit_more_than_ten_million",
+        "unused_account_status",
+        "recipient_account_suspend_status",
+        "number_of_transaction_with_the_account",
+        "transaction_history_with_the_account",
+        "first_time_ios_by_vulnerable_user",
+        "transaction_resumed_date",
+    }
+    features = raw_features_factory()
+    for field_name in derived_fields:
+        features.pop(field_name)
+
+    response = _client().post(
+        "/ml/predict",
+        json={"transaction_id": 1008, **features},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["transaction_id"] == 1008
+    assert response.json()["predict_result"] == 1
+
+
+def test_ml_predict_treats_null_derived_features_as_missing(
+    raw_features_factory: RawFeaturesFactory,
+) -> None:
+    response = _client().post(
+        "/ml/predict",
+        json={
+            "transaction_id": 1009,
+            **raw_features_factory(
+                distance=None,
+                time_difference=None,
+                unused_terminal_status=None,
+                account_one_month_max_amount=None,
+            ),
+        },
+    )
+
+    assert response.status_code == 200, response.text
+
+
+def test_ml_predict_fills_missing_customer_profile(
+    raw_features_factory: RawFeaturesFactory,
+) -> None:
+    """고객 원장이 없어도 거래 원천값이 있으면 임시 프로필로 추론한다."""
+
+    customer_profile_fields = {
+        "customer_birth_date",
+        "customer_gender",
+        "customer_name",
+        "customer_registration_datetime",
+        "customer_credit_rating",
+        "customer_loan_type",
+    }
+    features = raw_features_factory()
+    for field_name in customer_profile_fields:
+        features.pop(field_name)
+
+    response = _client().post(
+        "/ml/predict",
+        json={"transaction_id": 1010, **features},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["transaction_id"] == 1010
+
+
+def test_ml_predict_fills_missing_recipient_account(
+    raw_features_factory: RawFeaturesFactory,
+) -> None:
+    """ATM 거래처럼 수취계좌가 없어도 고정 더미값으로 추론한다."""
+
+    features = raw_features_factory()
+    features.pop("recipient_account_number")
+
+    response = _client().post(
+        "/ml/predict",
+        json={"transaction_id": 1011, **features},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["transaction_id"] == 1011
+
+
 def test_ml_predict_rejects_partial_transaction_features(
     raw_features_factory: RawFeaturesFactory,
 ) -> None:
