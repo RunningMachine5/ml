@@ -106,7 +106,7 @@ def test_ml_predict_returns_official_flat_contract(
 
     assert response.status_code == 200
     assert response.json() == {
-        "transaction_id": "1001",
+        "transaction_id": 1001,
         "predict_result": 1,
         "predict_proba": 0.8,
         "shap_values": {},
@@ -116,7 +116,7 @@ def test_ml_predict_returns_official_flat_contract(
 
 
 def test_ml_predict_rejects_missing_features() -> None:
-    response = _client().post("/ml/predict", json={"transaction_id": "TEST_000001"})
+    response = _client().post("/ml/predict", json={"transaction_id": 1001})
 
     assert response.status_code == 422
 
@@ -129,7 +129,7 @@ def test_ml_predict_rejects_partial_transaction_features(
 
     response = _client().post(
         "/ml/predict",
-        json={"transaction_id": "TEST_000001", **features},
+        json={"transaction_id": 1001, **features},
     )
 
     assert response.status_code == 422
@@ -142,7 +142,7 @@ def test_ml_predict_rejects_unknown_features(
     response = _client().post(
         "/ml/predict",
         json={
-            "transaction_id": "TEST_DRAFT_001",
+            "transaction_id": 1002,
             **raw_features_factory(new_transaction_field="draft-value"),
         },
     )
@@ -157,7 +157,7 @@ def test_ml_predict_rejects_training_label_and_identifiers(
     response = _client().post(
         "/ml/predict",
         json={
-            "transaction_id": "TEST_000001",
+            "transaction_id": 1003,
             **raw_features_factory(is_fraud=1, customer_id=123),
         },
     )
@@ -173,7 +173,7 @@ def test_ml_predict_rejects_invalid_duration(
     response = _client().post(
         "/ml/predict",
         json={
-            "transaction_id": "TEST_BAD_TIME",
+            "transaction_id": 1004,
             **raw_features_factory(time_difference="not-a-duration"),
         },
     )
@@ -188,7 +188,7 @@ def test_ml_predict_rejects_boolean_remaining_daily_limit(
     response = _client().post(
         "/ml/predict",
         json={
-            "transaction_id": "TEST_BOOLEAN_LIMIT",
+            "transaction_id": 1005,
             **raw_features_factory(account_remaining_amount_daily_limit_exceeded=False),
         },
     )
@@ -203,7 +203,7 @@ def test_ml_predict_rejects_error_code_longer_than_eight_characters(
     response = _client().post(
         "/ml/predict",
         json={
-            "transaction_id": "TEST_LONG_ERROR",
+            "transaction_id": 1006,
             **raw_features_factory(error_code="123456789"),
         },
     )
@@ -218,7 +218,7 @@ def test_ml_predict_normalizes_blank_optional_values(
     response = _client().post(
         "/ml/predict",
         json={
-            "transaction_id": "TEST_BLANK_OPTIONAL",
+            "transaction_id": 1007,
             **raw_features_factory(
                 account_initial_balance="",
                 account_balance=" ",
@@ -282,7 +282,7 @@ def test_xgboost_shap_uses_best_iteration_range(
     result = service.predict(
         PredictInputDTO.model_validate(
             {
-                "transaction_id": "TX-BEST-ITERATION",
+                "transaction_id": 1008,
                 **raw_features_factory(),
             }
         )

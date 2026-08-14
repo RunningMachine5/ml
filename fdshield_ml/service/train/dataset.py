@@ -77,7 +77,44 @@ def normalize_training_frame(source: pd.DataFrame) -> pd.DataFrame:
         raise TrainingDatasetError(
             f"training aliases produce duplicate columns: {duplicates}"
         )
-    return normalized.loc[:, CANONICAL_TRAINING_COLUMNS].reset_index(drop=True)
+    normalized = normalized.loc[:, CANONICAL_TRAINING_COLUMNS].reset_index(drop=True)
+    normalized[TRANSACTION_ID_COLUMN] = _normalize_training_transaction_ids(
+        normalized[TRANSACTION_ID_COLUMN]
+    )
+    return normalized
+
+
+def _normalize_training_transaction_ids(identifiers: pd.Series) -> pd.Series:
+    """기존 train1의 ``T00000001`` ID를 정식 양의 정수 ID로 이관한다."""
+
+    text = identifiers.astype("string").str.strip()
+    empty = identifiers.isna() | text.eq("")
+    if empty.any():
+        rows = empty.index[empty].tolist()[:5]
+        raise TrainingDatasetError(
+            f"training {TRANSACTION_ID_COLUMN} must not be empty; rows={rows}"
+        )
+
+    legacy_prefixed = text.str.fullmatch(r"T\d+", na=False)
+    numeric_text = text.where(~legacy_prefixed, text.str[1:])
+    try:
+        numeric = pd.to_numeric(numeric_text, errors="raise")
+    except (TypeError, ValueError) as exc:
+        raise TrainingDatasetError(
+            f"training {TRANSACTION_ID_COLUMN} must contain positive integers"
+        ) from exc
+
+    values = numeric.to_numpy(dtype="float64", copy=False)
+    invalid = (
+        numeric.isna() | ~np.isfinite(values) | (numeric <= 0) | (numeric % 1 != 0)
+    )
+    if invalid.any():
+        rows = invalid.index[invalid].tolist()[:5]
+        raise TrainingDatasetError(
+            f"training {TRANSACTION_ID_COLUMN} must contain positive integers; "
+            f"rows={rows}"
+        )
+    return numeric.astype("int64").rename(TRANSACTION_ID_COLUMN)
 
 
 def validate_binary_target(source: pd.DataFrame, *, context: str) -> pd.Series:
@@ -117,11 +154,15 @@ def validate_transaction_ids(source: pd.DataFrame, *, context: str) -> pd.Series
     if TRANSACTION_ID_COLUMN not in source:
         raise TrainingDatasetError(f"{context} data is missing {TRANSACTION_ID_COLUMN}")
     identifiers = source[TRANSACTION_ID_COLUMN]
-    empty = identifiers.isna() | identifiers.astype("string").str.strip().eq("")
-    if empty.any():
-        rows = empty.index[empty].tolist()[:5]
+    if not pd.api.types.is_integer_dtype(identifiers.dtype):
         raise TrainingDatasetError(
-            f"{context} {TRANSACTION_ID_COLUMN} must not be empty; rows={rows}"
+            f"{context} {TRANSACTION_ID_COLUMN} must use the normalized int contract"
+        )
+    if (identifiers <= 0).any():
+        rows = identifiers.index[identifiers <= 0].tolist()[:5]
+        raise TrainingDatasetError(
+            f"{context} {TRANSACTION_ID_COLUMN} must contain positive integers; "
+            f"rows={rows}"
         )
     duplicated = identifiers.duplicated(keep=False)
     if duplicated.any():

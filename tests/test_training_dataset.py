@@ -31,7 +31,7 @@ def _training_frame(
     rows: list[dict[str, object]] = []
     for index, label in enumerate(target, start=1):
         row = {
-            "transaction_id": f"TX-{index}",
+            "transaction_id": index,
             **raw_features_factory(),
             "customer_identification_number": f"synthetic-{index}",
             "customer_id": index,
@@ -57,6 +57,7 @@ def test_train1_alias_contract_normalizes_to_canonical_raw64_order(
     assert len(normalized.columns) == 64
     assert "flag_deposit_more_than_tenmillion" not in normalized
     assert "flag_deposit_more_than_ten_million" in normalized
+    assert normalized["transaction_id"].tolist() == [1, 2, 3, 4]
     assert TRAINING_DATA_CONTRACT == "fdshield-train1-raw64-to-model80-v1"
 
 
@@ -107,14 +108,25 @@ def test_transaction_ids_must_be_present_and_unique(
     raw_features_factory: RawFeaturesFactory,
 ) -> None:
     source = normalize_training_frame(_training_frame(raw_features_factory))
-    source.loc[0, "transaction_id"] = ""
-    with pytest.raises(TrainingDatasetError, match="must not be empty"):
+    source.loc[0, "transaction_id"] = 0
+    with pytest.raises(TrainingDatasetError, match="positive integers"):
         validate_transaction_ids(source, context="training")
 
     source = normalize_training_frame(_training_frame(raw_features_factory))
     source.loc[1, "transaction_id"] = source.loc[0, "transaction_id"]
     with pytest.raises(TrainingDatasetError, match="must be unique"):
         validate_transaction_ids(source, context="training")
+
+
+def test_legacy_train1_prefixed_ids_are_migrated_to_integers(
+    raw_features_factory: RawFeaturesFactory,
+) -> None:
+    source = _training_frame(raw_features_factory)
+    source["transaction_id"] = ["T00000001", "T00000002", "T00000003", "T00000004"]
+
+    normalized = normalize_training_frame(source)
+
+    assert normalized["transaction_id"].tolist() == [1, 2, 3, 4]
 
 
 def test_legacy_model80_plus_label_csv_is_not_a_training_contract() -> None:
