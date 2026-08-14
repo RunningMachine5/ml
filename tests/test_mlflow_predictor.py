@@ -40,7 +40,7 @@ def test_mlflow_predictor_returns_registered_model_metadata(
     result = service.predict(
         PredictInputDTO.model_validate(
             {
-                "transaction_id": "TX-17",
+                "transaction_id": 17,
                 **raw_features_factory(),
             }
         )
@@ -152,7 +152,7 @@ def test_mlflow_predictor_rejects_invalid_probability_shape(
         service.predict(
             PredictInputDTO.model_validate(
                 {
-                    "transaction_id": "TX-BAD",
+                    "transaction_id": 18,
                     **raw_features_factory(),
                 }
             )

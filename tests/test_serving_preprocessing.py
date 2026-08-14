@@ -96,7 +96,7 @@ def test_train1_alias_and_metadata_produce_same_model80_vector(
     raw_features_factory: RawFeaturesFactory,
 ) -> None:
     serving = {
-        "transaction_id": "TX-PARITY-1",
+        "transaction_id": 1,
         **raw_features_factory(),
     }
     expected = preprocess_transaction_features(serving)

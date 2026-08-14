@@ -9,26 +9,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 FeatureValue = str | int | float | bool | datetime | timedelta | None
 
 
-def _normalize_transaction_id(value: object) -> str:
-    """숫자·문자 거래 ID를 손실 없는 내부 문자열 ID로 통일한다."""
-
-    if isinstance(value, bool) or not isinstance(value, (str, int)):
-        # Pydantic v2는 validator의 TypeError를 ValidationError로 감싸지 않는다.
-        raise ValueError(  # noqa: TRY004
-            "transaction_id must be a non-empty string or integer"
-        )
-    normalized = str(value).strip()
-    if not normalized:
-        raise ValueError("transaction_id must not be empty")
-    return normalized
-
-
 class PredictInputDTO(BaseModel):
     """ML 담당자가 정의한 정식 flat snake_case 60개 추론 요청."""
 
     model_config = ConfigDict(extra="forbid")
 
-    transaction_id: str
+    # Backend DB가 생성한 양의 정수 PK만 추론 상관관계 ID로 허용한다.
+    transaction_id: int = Field(strict=True, gt=0)
     customer_birth_date: datetime
     customer_gender: str
     customer_name: str
@@ -89,11 +76,6 @@ class PredictInputDTO(BaseModel):
     transaction_history_with_the_account: int
     first_time_ios_by_vulnerable_user: bool
     transaction_resumed_date: datetime | None
-
-    @field_validator("transaction_id", mode="before")
-    @classmethod
-    def normalize_transaction_id(cls, value: object) -> str:
-        return _normalize_transaction_id(value)
 
     @field_validator(
         "account_initial_balance",

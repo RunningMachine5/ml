@@ -30,7 +30,7 @@ def test_bundled_model80_predicts_with_real_shap(
     service = load_local_predict_service(DEFAULT_LOCAL_MODEL_PATH)
     request = PredictInputDTO.model_validate(
         {
-            "transaction_id": "LOCAL-V2-001",
+            "transaction_id": 1001,
             **raw_features_factory(),
         }
     )
@@ -52,7 +52,7 @@ def test_bundled_model80_predicts_with_pr118_compatible_missing_values(
     service = load_local_predict_service(DEFAULT_LOCAL_MODEL_PATH)
     request = PredictInputDTO.model_validate(
         {
-            "transaction_id": "LOCAL-V2-PR118",
+            "transaction_id": 1002,
             **raw_features_factory(
                 account_account_type="e",
                 account_initial_balance=None,

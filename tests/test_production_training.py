@@ -25,7 +25,7 @@ def _training_frame(raw_features_factory: RawFeaturesFactory) -> pd.DataFrame:
     for row_number in range(40):
         is_fraud = row_number % 2 == 0
         row = {
-            "transaction_id": f"TX-{row_number:04d}",
+            "transaction_id": row_number + 1,
             **raw_features_factory(
                 transaction_datetime=f"2026-03-{(row_number % 20) + 1:02d}T10:00:00+09:00",
                 transaction_amount=(10_000_000 if is_fraud else 10_000) + row_number,
@@ -75,7 +75,7 @@ def test_training_accepts_mixed_train1_and_backend_datetime_formats(
             access_medium=None if index == 2 else "a",
         )
         row = {
-            "transaction_id": f"MIXED-{index}",
+            "transaction_id": index,
             **features,
             "customer_identification_number": f"synthetic-{index}",
             "customer_id": index,
