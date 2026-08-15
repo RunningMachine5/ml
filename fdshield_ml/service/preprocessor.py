@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import timedelta
 
 import numpy as np
 import pandas as pd
@@ -120,8 +119,7 @@ def preprocess_frame(source_frame: pd.DataFrame) -> pd.DataFrame:
         transaction_amount, dawn_month_std
     ).where(dawn_mask)
 
-    categories = source.loc[:, list(CATEGORICAL_LEVELS)].astype("string")
-    categories = categories.apply(lambda column: column.str.strip().str.lower())
+    categories = source.loc[:, list(CATEGORICAL_LEVELS)]
     encoded = pd.get_dummies(
         categories,
         columns=list(CATEGORICAL_LEVELS),
@@ -152,14 +150,7 @@ def _elapsed_days(
 
 
 def _duration_seconds(series: pd.Series) -> pd.Series:
-    def seconds(value: object) -> float:
-        if isinstance(value, timedelta):
-            return value.total_seconds()
-        days, clock = str(value).split(" days ")
-        hours, minutes, remaining_seconds = map(float, clock.split(":"))
-        return float(days) * 86_400 + hours * 3_600 + minutes * 60 + remaining_seconds
-
-    return series.map(seconds).astype("float64")
+    return pd.to_timedelta(series).dt.total_seconds().astype("float64")
 
 
 def _positive_denominator_ratio(

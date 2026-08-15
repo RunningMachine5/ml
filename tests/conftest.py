@@ -48,7 +48,7 @@ def raw_features_factory() -> Callable[..., dict[str, object]]:
             "transaction_datetime": "2025-01-12T03:04:05+09:00",
             "transaction_amount": 100_000,
             "channel": "mobile",
-            "operating_system": "Android",
+            "operating_system": "android",
             "error_code": "none",
             "type_general_automatic": "general",
             "ip_address": "127.0.0.1",
