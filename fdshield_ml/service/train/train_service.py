@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 from fdshield_ml.config.preprocess_config import MODEL_FEATURE_COLUMNS
-from fdshield_ml.service.preprocessor import FeaturePreprocessingError, Preprocessor
+from fdshield_ml.service.preprocessor import Preprocessor
 from fdshield_ml.service.train.dataset import (
     TrainingDatasetError,
     normalize_training_frame,
@@ -54,11 +54,9 @@ def prepare_training_data(source: pd.DataFrame) -> PreparedTrainingData:
         normalized = normalize_training_frame(source)
         target = validate_binary_target(normalized, context="training")
         validate_transaction_ids(normalized, context="training")
-        features = Preprocessor().train_preprocess(normalized)
-    except FeaturePreprocessingError as exc:
-        raise TrainingServiceError(f"Invalid train1 raw64 features: {exc}") from exc
     except TrainingDatasetError as exc:
         raise TrainingServiceError(str(exc)) from exc
+    features = Preprocessor().train_preprocess(normalized)
 
     if features.columns.tolist() != list(MODEL_FEATURE_COLUMNS):
         raise TrainingServiceError(

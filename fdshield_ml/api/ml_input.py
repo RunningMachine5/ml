@@ -9,7 +9,6 @@ from fdshield_ml.service.predict.predict_service import (
     PredictService,
     ml_predict_flow,
 )
-from fdshield_ml.service.preprocessor import FeaturePreprocessingError
 
 router = APIRouter(prefix="/ml", tags=["machine learning"])
 
@@ -24,8 +23,6 @@ def ml_input(
     service: PredictService = request.app.state.predict_service
     try:
         return ml_predict_flow(transaction, service)
-    except FeaturePreprocessingError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except PredictionServiceError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
