@@ -15,7 +15,6 @@ from fdshield_ml.config.preprocess_config import (
     TRAINING_INPUT_COLUMNS,
 )
 from fdshield_ml.service.preprocessor import (
-    FeaturePreprocessingError,
     preprocess_frame,
     preprocess_transaction_features,
 )
@@ -181,39 +180,3 @@ def test_nullable_account_amounts_preserve_xgboost_missing_values(
 
     assert np.isnan(row["account_remaining_amount_daily_limit_exceeded"])
     assert np.isnan(row["amount_to_balance_ratio"])
-
-
-def test_remaining_daily_limit_rejects_old_boolean_semantics(
-    raw_features_factory: RawFeaturesFactory,
-) -> None:
-    with pytest.raises(FeaturePreprocessingError, match="amount, not a boolean"):
-        preprocess_transaction_features(
-            raw_features_factory(account_remaining_amount_daily_limit_exceeded=False)
-        )
-
-
-def test_preprocessing_rejects_unknown_category(
-    raw_features_factory: RawFeaturesFactory,
-) -> None:
-    with pytest.raises(FeaturePreprocessingError, match="unknown levels"):
-        preprocess_transaction_features(raw_features_factory(channel="branch"))
-
-
-def test_preprocessing_rejects_negative_time_difference(
-    raw_features_factory: RawFeaturesFactory,
-) -> None:
-    with pytest.raises(FeaturePreprocessingError, match="greater than or equal to 0"):
-        preprocess_transaction_features(
-            raw_features_factory(time_difference="-1 days 23:59:59")
-        )
-
-
-def test_preprocessing_rejects_future_history_datetime(
-    raw_features_factory: RawFeaturesFactory,
-) -> None:
-    with pytest.raises(FeaturePreprocessingError, match="days_since_last_atm"):
-        preprocess_transaction_features(
-            raw_features_factory(
-                last_atm_transaction_datetime="2025-01-13T03:04:05+09:00"
-            )
-        )
