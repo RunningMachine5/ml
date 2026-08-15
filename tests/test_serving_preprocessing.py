@@ -80,15 +80,15 @@ def test_preprocessing_creates_every_fixed_one_hot_group(
         assert result.at[0, f"{source_column}_{selected_levels[source_column]}"] == 1
 
 
-def test_preprocessing_normalizes_category_case_and_whitespace(
+def test_preprocessing_keeps_original_category_matching_semantics(
     raw_features_factory: RawFeaturesFactory,
 ) -> None:
     row = preprocess_transaction_features(
         raw_features_factory(channel=" ATM ", operating_system="iOS")
     ).iloc[0]
 
-    assert row["channel_atm"] == 1
-    assert row["operating_system_ios"] == 1
+    assert row["channel_atm"] == 0
+    assert row["operating_system_ios"] == 0
 
 
 def test_train1_alias_and_metadata_produce_same_model80_vector(
