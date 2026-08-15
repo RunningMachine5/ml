@@ -31,9 +31,9 @@ DERIVED_FEATURE_DEFAULTS: dict[str, FeatureValue] = {
     "customer_inquery_atm_limit": False,
     "customer_increase_atm_limit": False,
     "account_release_suspention": False,
-    "account_one_month_max_amount": 0.0,
+    "account_one_month_max_amount": 0,
     "account_one_month_std_dev": 0.0,
-    "account_dawn_one_month_max_amount": 0.0,
+    "account_dawn_one_month_max_amount": 0,
     "account_dawn_one_month_std_dev": 0.0,
     "distance": 0.0,
     "time_difference": timedelta(0),
@@ -103,9 +103,9 @@ class PredictInputDTO(BaseModel):
     account_remaining_amount_daily_limit_exceeded: float | None
     account_indicator_openbanking: bool
     account_release_suspention: bool = False
-    account_one_month_max_amount: float = 0.0
+    account_one_month_max_amount: int = 0
     account_one_month_std_dev: float = 0.0
-    account_dawn_one_month_max_amount: float = 0.0
+    account_dawn_one_month_max_amount: int = 0
     account_dawn_one_month_std_dev: float = 0.0
     transaction_datetime: datetime
     transaction_amount: float
