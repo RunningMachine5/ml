@@ -13,7 +13,6 @@ from fdshield_ml.service.train.dataset import (
     TrainingDatasetError,
     normalize_training_frame,
     validate_binary_target,
-    validate_transaction_ids,
 )
 from fdshield_ml.service.train.model_training import (
     ModelTrainingConfig,
@@ -53,7 +52,6 @@ def prepare_training_data(source: pd.DataFrame) -> PreparedTrainingData:
     try:
         normalized = normalize_training_frame(source)
         target = validate_binary_target(normalized, context="training")
-        validate_transaction_ids(normalized, context="training")
     except TrainingDatasetError as exc:
         raise TrainingServiceError(str(exc)) from exc
     features = Preprocessor().train_preprocess(normalized)
