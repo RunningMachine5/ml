@@ -16,7 +16,6 @@ from fdshield_ml.service.train.dataset import (
     detect_training_dataset_kind,
     normalize_training_frame,
     validate_binary_target,
-    validate_transaction_ids,
 )
 
 RawFeaturesFactory = Callable[..., dict[str, object]]
@@ -104,29 +103,15 @@ def test_binary_label_requires_both_classes(
         validate_binary_target(source, context="training")
 
 
-def test_transaction_ids_must_be_present_and_unique(
-    raw_features_factory: RawFeaturesFactory,
-) -> None:
-    source = normalize_training_frame(_training_frame(raw_features_factory))
-    source.loc[0, "transaction_id"] = 0
-    with pytest.raises(TrainingDatasetError, match="positive integers"):
-        validate_transaction_ids(source, context="training")
-
-    source = normalize_training_frame(_training_frame(raw_features_factory))
-    source.loc[1, "transaction_id"] = source.loc[0, "transaction_id"]
-    with pytest.raises(TrainingDatasetError, match="must be unique"):
-        validate_transaction_ids(source, context="training")
-
-
-def test_legacy_train1_prefixed_ids_are_migrated_to_integers(
+def test_training_transaction_ids_are_preserved_as_metadata(
     raw_features_factory: RawFeaturesFactory,
 ) -> None:
     source = _training_frame(raw_features_factory)
-    source["transaction_id"] = ["T00000001", "T00000002", "T00000003", "T00000004"]
+    source["transaction_id"] = ["T00000001", 1, "DB-1", "DB-1"]
 
     normalized = normalize_training_frame(source)
 
-    assert normalized["transaction_id"].tolist() == [1, 2, 3, 4]
+    assert normalized["transaction_id"].tolist() == ["T00000001", 1, "DB-1", "DB-1"]
 
 
 def test_legacy_model80_plus_label_csv_is_not_a_training_contract() -> None:
