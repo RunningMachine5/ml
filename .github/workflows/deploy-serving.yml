@@ -280,8 +280,7 @@ jobs:
             --service "$tag_check_service" \
             --tag "$revision_tag" \
             --github-env "$GITHUB_ENV" \
-            --revision-env EXISTING_REVISION \
-            --url-env EXISTING_TAGGED_URL
+            --revision-env EXISTING_REVISION
 
       - name: Reuse exact staged revision or reject model tag collision
         if: env.EXISTING_REVISION != ''
@@ -327,27 +326,17 @@ jobs:
             --quiet
           echo "SERVING_DEPLOY_MODE=create" >> "$GITHUB_ENV"
 
-      - name: Resolve tagged revision URL
+      - name: Resolve tagged revision
         run: |
           gcloud run services describe "$CLOUD_RUN_SERVICE" \
             --project="$GCP_PROJECT_ID" \
             --region="$GCP_REGION" \
             --format=json > "$RUNNER_TEMP/service.json"
-          service_url="$(python3 - "$RUNNER_TEMP/service.json" <<'PY'
-          import json
-          import sys
-
-          print(json.load(open(sys.argv[1], encoding="utf-8")).get("status", {}).get("url", ""))
-          PY
-          )"
-          test -n "$service_url"
-          echo "SERVICE_URL=$service_url" >> "$GITHUB_ENV"
           python3 deploy/serving_revision_contract.py resolve \
             --service "$RUNNER_TEMP/service.json" \
             --tag "$REVISION_TAG" \
             --github-env "$GITHUB_ENV" \
             --revision-env NEW_REVISION \
-            --url-env TAGGED_URL \
             --require-present
 
       - name: Verify tagged revision configuration

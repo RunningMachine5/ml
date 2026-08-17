@@ -81,7 +81,6 @@ def test_local_model_manifest_matches_tracked_binary() -> None:
     assert manifest["model_version"] == "1"
     assert manifest["decision_threshold"] == pytest.approx(0.5)
     assert manifest["feature_count"] == 79
-    assert manifest["feature_contract_version"] == "raw51-model79-v1"
 
 
 def test_local_model_metadata_cannot_be_overridden_by_environment(

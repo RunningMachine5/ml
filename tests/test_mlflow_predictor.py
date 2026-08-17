@@ -82,9 +82,8 @@ def test_mlflow_predictor_loads_exact_numeric_registry_version(
         ),
     )
 
-    service = load_mlflow_predict_service()
+    load_mlflow_predict_service()
 
-    assert service.ready is True
     assert calls == {
         "tracking_uri": "https://mlflow.example.com",
         "model_uri": "models:/fdshield-fraud-detector/17",

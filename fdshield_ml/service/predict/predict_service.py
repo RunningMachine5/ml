@@ -46,7 +46,6 @@ class PredictService:
         self.model_name = model_name
         self.model_version = model_version
         self.threshold = threshold
-        self.ready = True
         self.preprocessor = Preprocessor()
 
     def predict(self, request: PredictInputDTO) -> PredictResultDTO:
