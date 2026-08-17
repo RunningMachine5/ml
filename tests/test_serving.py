@@ -1,4 +1,4 @@
-"""정식 raw60 -> model80 Serving HTTP 계약 테스트."""
+"""정식 raw51 -> model79 Serving HTTP 계약 테스트."""
 
 from collections.abc import Callable
 
@@ -23,12 +23,12 @@ RawFeaturesFactory = Callable[..., dict[str, object]]
 
 
 class FakeProbabilityModel:
-    """HTTP 계약에서 외부 모델 로딩만 격리하는 model80 테스트 대역."""
+    """HTTP 계약에서 외부 모델 로딩만 격리하는 model79 테스트 대역."""
 
     decision_threshold_ = 0.5
 
     def predict_proba(self, features: object) -> np.ndarray:
-        assert features.shape == (1, 80)
+        assert features.shape == (1, 79)
         assert list(features.columns) == list(MODEL_FEATURE_COLUMNS)
         return np.asarray([[0.2, 0.8]])
 
@@ -125,7 +125,7 @@ def test_ml_predict_rejects_partial_transaction_features(
     raw_features_factory: RawFeaturesFactory,
 ) -> None:
     features = raw_features_factory()
-    del features["location"]
+    del features["distance"]
 
     response = _client().post(
         "/ml/predict",
@@ -133,7 +133,7 @@ def test_ml_predict_rejects_partial_transaction_features(
     )
 
     assert response.status_code == 422
-    assert "location" in response.text
+    assert "distance" in response.text
 
 
 def test_ml_predict_rejects_unknown_features(
@@ -182,44 +182,10 @@ def test_ml_predict_rejects_invalid_duration(
     assert "time_difference" in response.text
 
 
-def test_ml_predict_rejects_error_code_longer_than_eight_characters(
-    raw_features_factory: RawFeaturesFactory,
-) -> None:
-    response = _client().post(
-        "/ml/predict",
-        json={
-            "transaction_id": 1006,
-            **raw_features_factory(error_code="123456789"),
-        },
-    )
-
-    assert response.status_code == 422
-    assert "error_code" in response.text
-
-
-def test_ml_predict_rejects_blank_optional_numbers(
-    raw_features_factory: RawFeaturesFactory,
-) -> None:
-    response = _client().post(
-        "/ml/predict",
-        json={
-            "transaction_id": 1007,
-            **raw_features_factory(
-                account_initial_balance="",
-                account_balance=" ",
-                account_remaining_amount_daily_limit_exceeded="",
-                access_medium=" ",
-            ),
-        },
-    )
-
-    assert response.status_code == 422
-
-
-def test_current_model_contract_contains_raw60_and_model80() -> None:
-    assert len(MODEL_INPUT_COLUMNS) == len(set(MODEL_INPUT_COLUMNS)) == 59
-    assert len(SERVING_INPUT_COLUMNS) == len(set(SERVING_INPUT_COLUMNS)) == 60
-    assert len(MODEL_FEATURE_COLUMNS) == len(set(MODEL_FEATURE_COLUMNS)) == 80
+def test_current_model_contract_contains_raw51_and_model79() -> None:
+    assert len(MODEL_INPUT_COLUMNS) == len(set(MODEL_INPUT_COLUMNS)) == 51
+    assert len(SERVING_INPUT_COLUMNS) == len(set(SERVING_INPUT_COLUMNS)) == 52
+    assert len(MODEL_FEATURE_COLUMNS) == len(set(MODEL_FEATURE_COLUMNS)) == 79
 
 
 def test_xgboost_shap_uses_best_iteration_range(
@@ -273,10 +239,10 @@ def test_xgboost_shap_uses_best_iteration_range(
         )
     )
 
-    assert len(result.shap_values) == 56
+    assert len(result.shap_values) == 55
     assert result.shap_values["customer_age"] == 0.0
     assert result.shap_values["time_difference"] == 22.0
     assert result.shap_values["distance"] == 23.0
-    assert result.shap_values["customer_gender"] == 99.0
-    assert result.shap_values["access_medium"] == sum(map(float, range(72, 80)))
+    assert result.shap_values["customer_gender"] == 97.0
+    assert result.shap_values["access_medium"] == sum(map(float, range(71, 79)))
     assert booster.iteration_range == (0, 3)

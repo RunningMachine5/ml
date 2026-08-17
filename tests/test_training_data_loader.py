@@ -14,6 +14,7 @@ from fdshield_ml.infrastructure.data_source import (
     data_source_type,
     materialize_training_data,
 )
+from tests.conftest import training_row_from_raw51
 
 RawFeaturesFactory = Callable[..., dict[str, object]]
 
@@ -27,16 +28,10 @@ def write_training_csv(
     target = labels or [0, 1, 0, 1]
     rows: list[dict[str, object]] = []
     for index, label in enumerate(target, start=1):
-        row = {
-            "transaction_id": index,
-            **raw_features_factory(transaction_amount=10_000 * index),
-            "customer_identification_number": f"synthetic-{index}",
-            "customer_id": index,
-            "balance_drain_ratio": 0.1,
-            "is_fraud": label,
-        }
-        row["flag_deposit_more_than_tenmillion"] = row.pop(
-            "flag_deposit_more_than_ten_million"
+        row = training_row_from_raw51(
+            raw_features_factory(transaction_amount=10_000 * index),
+            transaction_id=index,
+            is_fraud=label,
         )
         rows.append(row)
     pd.DataFrame(rows).loc[:, RAW_TRAINING_INPUT_COLUMNS].to_csv(path, index=False)

@@ -28,7 +28,7 @@ class TrainingServiceError(RuntimeError):
 
 @dataclass(frozen=True)
 class PreparedTrainingData:
-    """검증을 마친 model80 학습 행렬과 이진 라벨."""
+    """model79 학습 행렬과 이진 라벨."""
 
     features: pd.DataFrame
     target: pd.Series
@@ -47,7 +47,7 @@ def load_training_frame(data_path: str | Path) -> pd.DataFrame:
 
 
 def prepare_training_data(source: pd.DataFrame) -> PreparedTrainingData:
-    """raw64 DataFrame을 검증하고 정확한 model80 행렬로 변환한다."""
+    """raw64 DataFrame을 검증하고 model79 행렬로 변환한다."""
 
     try:
         normalized = normalize_training_frame(source)
@@ -58,7 +58,7 @@ def prepare_training_data(source: pd.DataFrame) -> PreparedTrainingData:
 
     if features.columns.tolist() != list(MODEL_FEATURE_COLUMNS):
         raise TrainingServiceError(
-            "Preprocessed training schema is not the model80 contract."
+            "Preprocessed training schema is not the model79 contract."
         )
     return PreparedTrainingData(features=features, target=target)
 

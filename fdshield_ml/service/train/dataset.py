@@ -1,7 +1,7 @@
 """``train1.csv`` 전용 운영 학습 데이터 계약.
 
 학습 입력은 ML 담당자가 전달한 snake_case 64열 원본 CSV 한 종류만
-지원한다. 모델 입력 80열을 미리 만든 CSV나 별도 companion CSV는 더 이상
+지원한다. 모델 입력 79열을 미리 만든 CSV나 별도 companion CSV는 더 이상
 학습 계약이 아니다.
 """
 
@@ -24,7 +24,7 @@ from fdshield_ml.config.preprocess_config import (
 LABEL_COLUMN = CONTRACT_LABEL_COLUMN
 TRANSACTION_ID_COLUMN = "transaction_id"
 TRANSACTION_DATETIME_COLUMN = "transaction_datetime"
-TRAINING_DATA_CONTRACT = "fdshield-train1-raw64-to-model80-v1"
+TRAINING_DATA_CONTRACT = "fdshield-train1-raw64-to-model79-v1"
 
 TrainingDatasetKind = Literal["raw"]
 RAW_TRAINING_COLUMNS = tuple(RAW_TRAINING_INPUT_COLUMNS)

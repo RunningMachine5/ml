@@ -1,4 +1,4 @@
-"""ML 담당자 기준 raw 거래를 학습·추론 공용 model80 행렬로 변환한다."""
+"""ML 담당자 기준 raw 거래를 학습·추론 공용 model79 행렬로 변환한다."""
 
 from __future__ import annotations
 
@@ -18,22 +18,23 @@ from fdshield_ml.config.preprocess_config import (
     TRANSACTION_DATETIME_COLUMN,
 )
 
+
 class Preprocessor:
     """전달본과 같은 이름으로 학습·추론 공용 전처리를 제공한다."""
 
     def predict_preprocess(self, transaction: object) -> pd.DataFrame:
-        """PredictInputDTO 한 건을 model80 행렬로 변환한다."""
+        """PredictInputDTO 한 건을 model79 행렬로 변환한다."""
 
         return preprocess_transaction_features(transaction.feature_values())
 
     def train_preprocess(self, frame: pd.DataFrame) -> pd.DataFrame:
-        """raw64 학습 DataFrame을 model80 행렬로 변환한다."""
+        """raw64 학습 DataFrame을 model79 행렬로 변환한다."""
 
         return preprocess_frame(frame)
 
 
 def preprocess_transaction_features(features: Mapping[str, object]) -> pd.DataFrame:
-    """입력 경계에서 검증된 거래 한 건을 model80 Feature로 바꾼다."""
+    """입력 경계에서 검증된 거래 한 건을 model79 Feature로 바꾼다."""
 
     return preprocess_frame(pd.DataFrame([dict(features)]))
 
@@ -45,7 +46,7 @@ def normalize_column_aliases(source_frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def preprocess_frame(source_frame: pd.DataFrame) -> pd.DataFrame:
-    """raw60 또는 raw64 DataFrame을 순서가 고정된 model80 행렬로 바꾼다.
+    """raw51 또는 raw64 DataFrame을 순서가 고정된 model79 행렬로 바꾼다.
 
     train1.csv 메타데이터와 라벨은 모델 입력에서 제외한다. 비율 Feature 및
     과거 거래시각이 없는 행의 NaN은 XGBoost missing value로 보존한다.

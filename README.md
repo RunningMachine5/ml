@@ -1,7 +1,7 @@
 # FDShield ML
 
 FDShield의 사기 거래 XGBoost 학습·추론 서비스입니다. 모델 계산은 ML 담당자가
-전달한 `train1.csv`, 80개 모델 Feature, XGBoost 설정을 기준으로 하며 기존의
+전달한 `train1.csv`, 79개 모델 Feature, XGBoost 설정을 기준으로 하며 기존의
 GCS, Cloud Run Job, MLflow Registry, Backend Callback, 관리자 수동 승인 인프라는
 그대로 사용합니다.
 
@@ -9,42 +9,38 @@ GCS, Cloud Run Job, MLflow Registry, Backend Callback, 관리자 수동 승인 �
 
 | 구분 | 계약 |
 |---|---|
-| 추론 API 입력 | flat raw60: `transaction_id` 1개 + 실제 전처리 입력 59개 |
-| 학습 CSV 입력 | raw64: raw60 + 학습 메타데이터·라벨 4개 |
-| 전처리 출력 | 이름과 순서가 고정된 숫자 model80 |
+| 추론 API 입력 | flat raw52: `transaction_id` 1개 + 전처리 입력 raw51 |
+| 학습 CSV 입력 | 원본·메타데이터·라벨을 포함한 train1 raw64 |
+| 전처리 출력 | 이름과 순서가 고정된 숫자 model79 |
 | 모델 | XGBoost binary logistic |
 | 기본 판정 임계값 | `0.5` |
 | Registry 모델명 | `fdshield-fraud-detector-v2` |
 | 로컬 모델 번들 | `models/fdshield-fraud-detector-v2` |
 
-학습과 추론은 모두 `fdshield_ml/service/preprocessor.py`의 같은 raw59 전처리를
-사용합니다. `transaction_id`는 응답 연결용이며 model80에 들어가지 않습니다.
-학습 raw64는 raw60의 flag 컬럼명만 CSV 별칭인
-`flag_deposit_more_than_tenmillion`으로 교체하고, `customer_id`,
-`customer_identification_number`, `balance_drain_ratio`, `is_fraud` 4개를 더한
-구조입니다. 별칭은 추가 열이 아니며 로딩 시 canonical 이름인
-`flag_deposit_more_than_ten_million`으로 되돌립니다.
+학습과 추론은 모두 `fdshield_ml/service/preprocessor.py`의 같은 raw51 전처리를
+사용합니다. `transaction_id`는 응답 연결용이며 model79에 들어가지 않습니다.
+학습 raw64에는 raw51 외에 고객·계좌 식별값과 학습 메타데이터·라벨이 포함됩니다.
+CSV의 기존 이름인 `account_release_suspention`, `transaction_resumed_date`,
+`flag_deposit_more_than_tenmillion`은 로딩할 때 현재 계약 이름으로 바꿉니다.
 
-전달본 DTO·CSV의 기존 불일치는 실제 데이터와 model80 계약을 기준으로
+전달본 DTO·CSV의 기존 불일치는 실제 데이터와 model79 계약을 기준으로
 보정합니다. `account_remaining_amount_daily_limit_exceeded`는 bool이 아닌
 숫자형 금액으로 받고, Channel·Operating System은 공백 제거 후 소문자로
 정규화합니다. Operating System과 Access Medium은 nullable이며 값이 없으면
-각 One-hot 그룹을 모두 0으로 둡니다. `account_account_type=e`도 기존 model80의
+각 One-hot 그룹을 모두 0으로 둡니다. `account_account_type=e`도 model79의
 `a~d` One-hot을 모두 0으로 두는 unseen category로 허용하므로 Feature 추가나
-재학습은 하지 않습니다. 계좌 최초 잔액·현재 잔액·일일 한도 초과 잔액은
-nullable이며 model80에 투영되는 missing 값과 관련 비율은 XGBoost가 처리할
-`NaN`으로 유지합니다. `error_code`는 최대 8자이고, 외부 canonical 입금 플래그
-이름은 `flag_deposit_more_than_ten_million`을 계속 사용합니다. 원본 CSV는
-수정하지 않습니다.
+별도 열 추가는 하지 않습니다. 계좌 최초 잔액·현재 잔액·일일 한도 초과 잔액은
+Backend 계약대로 정수로 받습니다. 외부 canonical 입금 플래그 이름은
+`flag_deposit_more_than_ten_million`을 사용하고 원본 CSV는 수정하지 않습니다.
 
 ## 코드 구조
 
 ```text
 fdshield_ml/
-├── config/preprocess_config.py      # raw60/raw64/model80 컬럼 계약
+├── config/preprocess_config.py      # raw52/raw64/model79 컬럼 계약
 ├── dto/                              # PredictInputDTO, PredictResultDTO
 ├── service/                          # ML 담당자가 주로 수정하는 핵심 코드
-│   ├── preprocessor.py               # 학습·추론 공용 raw59 -> model80
+│   ├── preprocessor.py               # 학습·추론 공용 raw51 -> model79
 │   ├── predict/                      # 확률·SHAP·예측 흐름
 │   └── train/                        # raw64 검증·XGBoost 학습 흐름
 ├── infrastructure/                   # 운영 환경 연동
@@ -64,7 +60,7 @@ data/open/train1.csv                # 로컬 학습 파일, Git 제외
 
 ### 처음 보는 순서
 
-1. `config/preprocess_config.py`에서 raw60·raw64·model80 컬럼 계약을 확인합니다.
+1. `config/preprocess_config.py`에서 raw52·raw64·model79 컬럼 계약을 확인합니다.
 2. `service/preprocessor.py`에서 학습과 추론이 공유하는 변환을 확인합니다.
 3. 실시간 추론은 `serving.py` → `api/ml_input.py` →
    `service/predict/predict_service.py` 순으로 읽습니다.
@@ -125,7 +121,7 @@ uv run python -m fdshield_ml.local_train `
 ```
 
 결과 폴더에 `model.json`, `manifest.json`, `metrics.json`이 생성되고,
-저장 직후 실제 Serving loader로 모델 해시·model80 Feature 순서·판정 임계값을
+저장 직후 실제 Serving loader로 모델 해시·model79 Feature 순서·판정 임계값을
 검증합니다. 기존 파일을 덮어쓰지 않도록 출력 폴더가 비어 있지 않으면
 실행을 거절합니다.
 
@@ -148,12 +144,12 @@ docker build -f Dockerfile.training -t fdshield/ml-training:local .
 docker run --rm --env-file .env.training -v "${PWD}/data/open:/app/data/open:ro" fdshield/ml-training:local
 ```
 
-Training Job은 raw64 스키마, 라벨, 거래 ID와 model80 전처리를 검증한 뒤
+Training Job은 raw64 스키마, 라벨, 거래 ID와 model79 전처리를 검증한 뒤
 stratified 80/20 분할로 후보 모델을 학습해 Registry에 등록합니다. 별도의 Stub이나
 검증 전용 실행 모드는 지원하지 않습니다.
 
 후보 모델은 PR-AUC, ROC-AUC, Recall, Precision, F1, FPR과 판정 임계값을
-MLflow에 저장합니다. 같은 model80 계약의 현재 champion이 있으면 같은 검증
+MLflow에 저장합니다. 같은 model79 계약의 현재 champion이 있으면 같은 검증
 데이터에서 비교하고 `metadata/model-comparison.json`을 기록합니다. 결과의
 `RECOMMENDED`, `REVIEW_REQUIRED`, `NOT_RECOMMENDED`는 관리자 참고 정보이며 모델을
 자동 승격하거나 Serving 트래픽을 변경하지 않습니다.
@@ -266,7 +262,7 @@ generation 관찰 및 `Ready=True`까지 끝나야 Backend 승인 대상으로 �
 |---|---|---|
 | `GET` | `/health` | 프로세스 상태 |
 | `GET` | `/ready` | 모델 로딩 완료 상태 |
-| `POST` | `/ml/predict` | 정식 flat raw60 추론 계약 |
+| `POST` | `/ml/predict` | 정식 flat raw52 추론 계약 |
 
 응답에는 판정, 확률, 거래별 SHAP과 운영 추적용 `model_name`, `model_version`이
 포함됩니다.
@@ -278,13 +274,13 @@ generation 관찰 및 `Ready=True`까지 끝나야 Backend 승인 대상으로 �
 3. MLflow의 성능 지표와 모델 비교 결과를 검토합니다.
 4. 수동 Serving Workflow에 후보의 정확한 모델명·버전을 넣어 새 코드와 모델을
    트래픽 0% revision으로 준비합니다.
-5. Backend 입력 DTO를 raw60 계약으로 전환한 뒤 관리자가 후보를 승인합니다.
+5. Backend 입력 DTO를 raw52 계약으로 전환한 뒤 관리자가 후보를 승인합니다.
 6. Backend 승격 API가 tagged revision에 실제 추론 smoke를 수행하고 100% 트래픽
    전환을 완료합니다.
 
 자동 모델 승격은 사용하지 않습니다.
 
-Backend와 ML Serving은 모두 raw60→model80 계약으로 전환되어야 같은 revision을
+Backend와 ML Serving은 모두 raw51→model79 계약으로 전환되어야 같은 revision을
 사용할 수 있습니다. 입력 계약과 모델 Feature 수가 다른 과거 revision으로 되돌리는
 것은 지원하지 않습니다.
 
@@ -297,7 +293,7 @@ uv run pytest
 핵심 검증 항목은 다음과 같습니다.
 
 - train1 raw64 스키마와 `is_fraud` 라벨
-- 학습·추론 전처리의 model80 이름과 순서 일치
+- 학습·추론 전처리의 model79 이름과 순서 일치
 - 로컬 모델 manifest·해시·Feature 개수
 - `/health`, `/ready`, `/ml/predict`
 - MLflow 후보 등록·성능 비교·Backend Callback

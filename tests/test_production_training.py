@@ -16,6 +16,7 @@ from fdshield_ml.service.train import model_training
 from fdshield_ml.service.train.dataset import TRAINING_DATA_CONTRACT
 from fdshield_ml.service.train.train_service import prepare_training_data
 from fdshield_ml.service.xgboost_prediction import prediction_iteration_range
+from tests.conftest import training_row_from_raw51
 
 RawFeaturesFactory = Callable[..., dict[str, object]]
 
@@ -24,19 +25,13 @@ def _training_frame(raw_features_factory: RawFeaturesFactory) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     for row_number in range(40):
         is_fraud = row_number % 2 == 0
-        row = {
-            "transaction_id": row_number + 1,
-            **raw_features_factory(
+        row = training_row_from_raw51(
+            raw_features_factory(
                 transaction_datetime=f"2026-03-{(row_number % 20) + 1:02d}T10:00:00+09:00",
                 transaction_amount=(10_000_000 if is_fraud else 10_000) + row_number,
             ),
-            "customer_identification_number": f"synthetic-{row_number}",
-            "customer_id": row_number,
-            "balance_drain_ratio": 0.1,
-            "is_fraud": int(is_fraud),
-        }
-        row["flag_deposit_more_than_tenmillion"] = row.pop(
-            "flag_deposit_more_than_ten_million"
+            transaction_id=row_number + 1,
+            is_fraud=int(is_fraud),
         )
         rows.append(row)
     return pd.DataFrame(rows).loc[:, RAW_TRAINING_INPUT_COLUMNS]
@@ -63,42 +58,30 @@ def test_training_accepts_mixed_train1_and_backend_datetime_formats(
                 "2024-12-30 3:04" if index == 1 else "2024-12-30 03:04:05"
             ),
             last_bank_branch_transaction_datetime=None,
-            transaction_resumed_date=(
+            recipient_transaction_resumed_date=(
                 "2024-12-01 1:02" if index == 1 else "2024-12-01 01:02:03"
             ),
             account_account_type="e" if index == 2 else "a",
-            account_initial_balance=None if index == 2 else 10_000_000,
-            account_balance=None if index == 2 else 9_000_000,
-            account_remaining_amount_daily_limit_exceeded=(
-                None if index == 2 else 5_000_000
-            ),
             access_medium=None if index == 2 else "a",
         )
-        row = {
-            "transaction_id": index,
-            **features,
-            "customer_identification_number": f"synthetic-{index}",
-            "customer_id": index,
-            "balance_drain_ratio": "" if index == 2 else 0.1,
-            "is_fraud": is_fraud,
-        }
-        row["flag_deposit_more_than_tenmillion"] = row.pop(
-            "flag_deposit_more_than_ten_million"
+        row = training_row_from_raw51(
+            features,
+            transaction_id=index,
+            is_fraud=is_fraud,
         )
+        row["balance_drain_ratio"] = "" if index == 2 else 0.1
         rows.append(row)
 
     prepared = prepare_training_data(
         pd.DataFrame(rows).loc[:, RAW_TRAINING_INPUT_COLUMNS]
     )
 
-    assert prepared.features.shape == (2, 80)
+    assert prepared.features.shape == (2, 79)
     assert prepared.features.loc[1, "account_account_type_a"] == 0
-    assert pd.isna(
-        prepared.features.loc[
-            1,
-            "account_remaining_amount_daily_limit_exceeded",
-        ]
-    )
+    assert prepared.features.loc[
+        1,
+        "account_remaining_amount_daily_limit_exceeded",
+    ] == pytest.approx(6_004_950)
 
 
 def _install_fake_mlflow(
@@ -202,7 +185,7 @@ def test_legacy_91_feature_champion_is_not_compared() -> None:
         is False
     )
     assert (
-        mlflow_integration.champion_contract_matches(SimpleNamespace(n_features_in_=80))
+        mlflow_integration.champion_contract_matches(SimpleNamespace(n_features_in_=79))
         is True
     )
 
@@ -291,7 +274,7 @@ def test_train1_registers_candidate_with_comparison_metadata(
     assert comparison["recommendation"] == result.recommendation
     feature_schema = calls["dict_artifacts"]["metadata/model-feature-schema.json"]
     assert feature_schema["feature_contract"] == TRAINING_DATA_CONTRACT
-    assert feature_schema["feature_count"] == 80
+    assert feature_schema["feature_count"] == 79
     assert calls["run_tags"]["feature_contract"] == TRAINING_DATA_CONTRACT
     assert calls["run_tags"]["champion_comparison_status"] == "not_available"
 
@@ -299,8 +282,8 @@ def test_train1_registers_candidate_with_comparison_metadata(
 def test_champion_evaluation_uses_registered_model_threshold_tag(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class Model80Champion:
-        n_features_in_ = 80
+    class Model79Champion:
+        n_features_in_ = 79
 
         def predict_proba(self, features: pd.DataFrame) -> object:
             assert len(features) == 2
@@ -320,14 +303,14 @@ def test_champion_evaluation_uses_registered_model_threshold_tag(
     monkeypatch.setattr(
         mlflow_integration.mlflow.sklearn,
         "load_model",
-        lambda _: Model80Champion(),
+        lambda _: Model79Champion(),
     )
 
     evaluation = mlflow_integration.evaluate_champion(
         FakeClient(),  # type: ignore[arg-type]
         registered_model_name="fdshield-fraud-detector-v2",
         model_alias="champion",
-        features=pd.DataFrame(np.zeros((2, 80))),
+        features=pd.DataFrame(np.zeros((2, 79))),
         target=pd.Series([0, 1]),
     )
 
@@ -364,7 +347,7 @@ def test_legacy_91_feature_champion_comparison_is_skipped(
         FakeClient(),  # type: ignore[arg-type]
         registered_model_name="fdshield-fraud-detector-v2",
         model_alias="champion",
-        features=pd.DataFrame(np.zeros((2, 80))),
+        features=pd.DataFrame(np.zeros((2, 79))),
         target=pd.Series([0, 1]),
     )
 

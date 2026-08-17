@@ -200,7 +200,7 @@ def load_mlflow_predict_service() -> PredictService:
 
 
 def _validate_registered_model_contract(model: object) -> None:
-    """Ready 전에 Registry 모델의 model80 순서와 이진 class 계약을 확정한다."""
+    """Ready 전에 Registry 모델의 model79 순서와 이진 class 계약을 확정한다."""
 
     names = getattr(model, "feature_names_in_", None)
     if names is None:
@@ -210,7 +210,7 @@ def _validate_registered_model_contract(model: object) -> None:
             names = None
     if names is None or tuple(str(name) for name in names) != MODEL_FEATURE_COLUMNS:
         raise PredictionServiceError(
-            "Registered model feature names or order do not match model80"
+            "Registered model feature names or order do not match model79"
         )
     classes = getattr(model, "classes_", None)
     if classes is None or not np.array_equal(np.asarray(classes), np.asarray([0, 1])):

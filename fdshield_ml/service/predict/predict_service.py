@@ -21,7 +21,7 @@ class PredictionServiceError(RuntimeError):
 
 
 class PredictService:
-    """raw60을 model80으로 바꾸고 사기 확률과 설명값을 반환한다."""
+    """raw51을 model79로 바꾸고 사기 확률과 설명값을 반환한다."""
 
     def __init__(
         self,

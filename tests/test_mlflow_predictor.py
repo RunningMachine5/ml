@@ -24,7 +24,7 @@ class FakeProbabilityModel:
     classes_ = np.asarray([0, 1])
 
     def predict_proba(self, features: object) -> np.ndarray:
-        assert features.shape == (1, 80)
+        assert features.shape == (1, 79)
         return np.asarray([[0.08, 0.92]])
 
 
@@ -129,7 +129,7 @@ def test_mlflow_predictor_rejects_wrong_registered_feature_contract(
         ),
     )
 
-    with pytest.raises(PredictionServiceError, match="model80"):
+    with pytest.raises(PredictionServiceError, match="model79"):
         load_mlflow_predict_service()
 
 

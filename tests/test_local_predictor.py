@@ -1,4 +1,4 @@
-"""Git에 포함된 운영 model80 번들의 로딩·예측 계약 테스트."""
+"""Git에 포함된 운영 model79 번들의 로딩·예측 계약 테스트."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from fdshield_ml.service.predict.predict_service import (
 RawFeaturesFactory = Callable[..., dict[str, object]]
 
 
-def test_bundled_model80_predicts_with_real_shap(
+def test_bundled_model79_predicts_with_real_shap(
     raw_features_factory: RawFeaturesFactory,
 ) -> None:
     service = load_local_predict_service(DEFAULT_LOCAL_MODEL_PATH)
@@ -43,10 +43,10 @@ def test_bundled_model80_predicts_with_real_shap(
     assert first.model_version == "1"
     assert first.predict_result == int(first.predict_proba >= 0.5)
     assert 0.0 <= first.predict_proba <= 1.0
-    assert len(first.shap_values) == 56
+    assert len(first.shap_values) == 55
 
 
-def test_bundled_model80_predicts_with_pr118_compatible_missing_values(
+def test_bundled_model79_accepts_supported_optional_values(
     raw_features_factory: RawFeaturesFactory,
 ) -> None:
     service = load_local_predict_service(DEFAULT_LOCAL_MODEL_PATH)
@@ -55,9 +55,6 @@ def test_bundled_model80_predicts_with_pr118_compatible_missing_values(
             "transaction_id": 1002,
             **raw_features_factory(
                 account_account_type="e",
-                account_initial_balance=None,
-                account_balance=None,
-                account_remaining_amount_daily_limit_exceeded=None,
                 access_medium=None,
             ),
         }
@@ -69,7 +66,7 @@ def test_bundled_model80_predicts_with_pr118_compatible_missing_values(
     assert result.model_version == "1"
     assert result.predict_result == int(result.predict_proba >= 0.5)
     assert 0.0 <= result.predict_proba <= 1.0
-    assert len(result.shap_values) == 56
+    assert len(result.shap_values) == 55
 
 
 def test_local_model_manifest_matches_tracked_binary() -> None:
@@ -83,8 +80,8 @@ def test_local_model_manifest_matches_tracked_binary() -> None:
     assert actual_sha256 == manifest["model_sha256"]
     assert manifest["model_version"] == "1"
     assert manifest["decision_threshold"] == pytest.approx(0.5)
-    assert manifest["feature_count"] == 80
-    assert manifest["feature_contract_version"] == "raw60-model80-v1"
+    assert manifest["feature_count"] == 79
+    assert manifest["feature_contract_version"] == "raw51-model79-v1"
 
 
 def test_local_model_metadata_cannot_be_overridden_by_environment(
@@ -109,7 +106,7 @@ def test_local_model_rejects_hash_mismatch(tmp_path: Path) -> None:
         "model_format": "xgboost-json",
         "model_file": "model.json",
         "model_sha256": "0" * 64,
-        "feature_count": 80,
+        "feature_count": 79,
         "decision_threshold": 0.5,
     }
     (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")

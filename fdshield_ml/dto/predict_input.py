@@ -1,4 +1,4 @@
-"""ML 담당자가 정의한 정식 flat raw60 추론 입력 DTO."""
+"""Backend 담당자가 계산한 정식 flat raw51 추론 입력 DTO."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ from pydantic import BaseModel, ConfigDict, Field
 FeatureValue = str | int | float | bool | datetime | timedelta | None
 
 class PredictInputDTO(BaseModel):
-    """ML 담당자가 정의한 정식 flat snake_case 60개 추론 요청.
+    """거래 ID와 Backend raw51을 받는 추론 요청.
 
-    Backend에서 조립이 끝난 raw59와 거래 ID를 그대로 받는다.
+    모델 전처리에 쓰지 않는 고객명·계좌번호·접속 식별값은 받지 않는다.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -20,7 +20,6 @@ class PredictInputDTO(BaseModel):
     transaction_id: int = Field(strict=True, gt=0)
     customer_birth_date: datetime
     customer_gender: str
-    customer_name: str
     customer_registration_datetime: datetime
     customer_credit_rating: int
     customer_flag_change_of_authentication_1: bool
@@ -38,32 +37,25 @@ class PredictInputDTO(BaseModel):
     customer_flag_terminal_malicious_behavior_6: bool
     customer_inquery_atm_limit: bool
     customer_increase_atm_limit: bool
-    account_account_number: str | int
     account_account_type: str
     account_creation_datetime: datetime
-    account_initial_balance: float | None
-    account_balance: float | None
+    account_initial_balance: int
+    account_balance: int
     account_indicator_release_limit_excess: int
-    account_amount_daily_limit: float
-    # 전달 DTO의 bool 표기는 CSV·학습 모델과 달라 금액형으로 바로잡는다.
-    account_remaining_amount_daily_limit_exceeded: float | None
+    account_amount_daily_limit: int
+    account_remaining_amount_daily_limit_exceeded: int
     account_indicator_openbanking: bool
-    account_release_suspention: bool
+    recipient_release_suspension: bool
     account_one_month_max_amount: int
     account_one_month_std_dev: float
     account_dawn_one_month_max_amount: int
     account_dawn_one_month_std_dev: float
     transaction_datetime: datetime
-    transaction_amount: float
+    transaction_amount: int
     channel: str
     operating_system: str | None
-    error_code: str = Field(max_length=8)
     type_general_automatic: str
-    ip_address: str | None
-    mac_address: str | None
     access_medium: str | None
-    location: str
-    recipient_account_number: str | int
     transaction_num_connection_failure: int
     another_person_account: bool
     distance: float
@@ -76,8 +68,7 @@ class PredictInputDTO(BaseModel):
     recipient_account_suspend_status: bool
     number_of_transaction_with_the_account: int
     transaction_history_with_the_account: int
-    first_time_ios_by_vulnerable_user: bool
-    transaction_resumed_date: datetime | None
+    recipient_transaction_resumed_date: datetime | None
 
     def feature_values(self) -> dict[str, FeatureValue]:
         """식별용 transaction_id를 제외한 공용 전처리 입력을 반환한다."""
