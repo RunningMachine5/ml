@@ -104,10 +104,15 @@ services:
     volumes:
       # Compose 경로는 첫 번째 파일인 backend/docker-compose.yml 기준입니다.
       - ../ml/deploy/nginx/mlflow.conf:/etc/nginx/conf.d/mlflow.conf:ro
+      # 기존 팀 공유용 정적 시안은 api.fdshield.cloud/preview/에서 계속 제공합니다.
+      - /opt/fdshield/frontend:/usr/share/nginx/html/preview:ro
       # 인증서는 VM 호스트의 Certbot이 발급하고 Nginx에는 읽기 전용으로 제공합니다.
       - /etc/letsencrypt:/etc/letsencrypt:ro
       # HTTP-01 검증 파일은 Certbot이 쓰고 Nginx가 HTTP로 읽는 공유 Webroot입니다.
       - certbot_webroot:/var/www/certbot:ro
+      # Frontend CD는 releases/<commit>을 올리고 current 심볼릭 링크만 교체합니다.
+      # 상위 폴더를 마운트해야 Nginx 재시작 없이도 새 current 링크를 따라갑니다.
+      - /opt/fdshield/frontend:/srv/frontend:ro
 
 volumes:
   mlflow_artifacts:
