@@ -1,10 +1,16 @@
+import json
 from pathlib import Path
+
+from fdshield_ml.config.preprocess_config import SERVING_INPUT_COLUMNS
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_cloud_build_smokes_exact_mlflow_model_with_secret_env() -> None:
     cloud_build = (ROOT / "cloudbuild.serving.yaml").read_text(encoding="utf-8")
+    smoke_request = json.loads(
+        (ROOT / "deploy" / "smoke-request.json").read_text(encoding="utf-8")
+    )
 
     assert "smoke-serving-image" in cloud_build
     assert "secretEnv:" in cloud_build
@@ -17,6 +23,8 @@ def test_cloud_build_smokes_exact_mlflow_model_with_secret_env() -> None:
     assert 'prediction.get("predict_result")' in cloud_build
     assert 'prediction.get("predict_proba")' in cloud_build
     assert 'prediction.get("shap_values", {})' in cloud_build
+    assert "!= 55" in cloud_build
+    assert tuple(smoke_request) == SERVING_INPUT_COLUMNS
 
 
 def test_github_runner_does_not_call_internal_cloud_run_url() -> None:
@@ -75,15 +83,21 @@ def test_training_deploy_removes_legacy_promotion_environment() -> None:
         'TRAINING_TRANSACTIONS_URI,TRAINING_SPLIT_DATETIME,BACKEND_TRAINING_RUN_ID"'
     ) in workflow
     assert "TRAINING_DATA_URI: ${{ vars.TRAINING_DATA_URI }}" in workflow
-    assert "TRAINING_JOB_SERVICE_ACCOUNT: ${{ vars.TRAINING_JOB_SERVICE_ACCOUNT }}" in workflow
-    assert "TRAINING_RESULT_CALLBACK_URL: ${{ vars.TRAINING_RESULT_CALLBACK_URL }}" in workflow
+    assert (
+        "TRAINING_JOB_SERVICE_ACCOUNT: ${{ vars.TRAINING_JOB_SERVICE_ACCOUNT }}"
+        in workflow
+    )
+    assert (
+        "TRAINING_RESULT_CALLBACK_URL: ${{ vars.TRAINING_RESULT_CALLBACK_URL }}"
+        in workflow
+    )
     assert "REGISTERED_MODEL_NAME: fdshield-fraud-detector-v2" in workflow
     assert 'if [[ "$TRAINING_DATA_URI" != gs://*/*.csv ]]' in workflow
     assert (
         '--update-env-vars="TRAINING_DATA_URI=$TRAINING_DATA_URI,'
-        'MLFLOW_EXPERIMENT_NAME=$MLFLOW_EXPERIMENT_NAME,'
-        'MLFLOW_REGISTERED_MODEL_NAME=$REGISTERED_MODEL_NAME,'
-        'MLFLOW_TRACKING_URI=$MLFLOW_TRACKING_URI,'
+        "MLFLOW_EXPERIMENT_NAME=$MLFLOW_EXPERIMENT_NAME,"
+        "MLFLOW_REGISTERED_MODEL_NAME=$REGISTERED_MODEL_NAME,"
+        "MLFLOW_TRACKING_URI=$MLFLOW_TRACKING_URI,"
         'TRAINING_RESULT_CALLBACK_URL=$TRAINING_RESULT_CALLBACK_URL"'
     ) in workflow
     assert '--command=""' in workflow

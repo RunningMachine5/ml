@@ -74,8 +74,8 @@ steps:
         probability = prediction.get("predict_proba")
         if not isinstance(probability, (int, float)) or not 0 <= probability <= 1:
             raise SystemExit("Smoke prediction returned an invalid predict_proba")
-        if len(prediction.get("shap_values", {})) != 56:
-            raise SystemExit("Smoke prediction did not return 56 grouped SHAP values")
+        if len(prediction.get("shap_values", {})) != 55:
+            raise SystemExit("Smoke prediction did not return 55 grouped SHAP values")
         print("Serving image loaded the exact MLflow model and passed /ml/predict.")
         PY
 
