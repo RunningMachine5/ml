@@ -108,6 +108,9 @@ services:
       - /etc/letsencrypt:/etc/letsencrypt:ro
       # HTTP-01 검증 파일은 Certbot이 쓰고 Nginx가 HTTP로 읽는 공유 Webroot입니다.
       - certbot_webroot:/var/www/certbot:ro
+      # Frontend CD는 releases/<commit>을 올리고 current 심볼릭 링크만 교체합니다.
+      # 상위 폴더를 마운트해야 Nginx 재시작 없이도 새 current 링크를 따라갑니다.
+      - /opt/fdshield/frontend:/srv/frontend:ro
 
 volumes:
   mlflow_artifacts:
