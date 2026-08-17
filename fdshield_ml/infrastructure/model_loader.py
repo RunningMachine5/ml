@@ -116,15 +116,6 @@ def load_local_predict_service(bundle_path: Path) -> PredictService:
     )
 
 
-__all__ = [
-    "DEFAULT_LOCAL_MODEL_PATH",
-    "load_local_predict_service",
-    "load_local_predict_service_from_environment",
-    "load_mlflow_predict_service",
-    "predict_service_from_environment",
-]
-
-
 def _required_string(manifest: dict[str, Any], name: str) -> str:
     value = manifest.get(name)
     if not isinstance(value, str) or not value.strip():

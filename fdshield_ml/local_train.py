@@ -134,12 +134,3 @@ def main(
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
-__all__ = [
-    "DEFAULT_DATA_PATH",
-    "DEFAULT_OUTPUT_PATH",
-    "build_parser",
-    "main",
-    "train_local_bundle",
-]

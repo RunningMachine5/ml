@@ -74,8 +74,3 @@ class PredictInputDTO(BaseModel):
         """식별용 transaction_id를 제외한 공용 전처리 입력을 반환한다."""
 
         return self.model_dump(exclude={"transaction_id"})
-
-
-__all__ = [
-    "PredictInputDTO",
-]

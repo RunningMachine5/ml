@@ -68,19 +68,3 @@ class PredictService:
             model_name=self.model_name,
             model_version=self.model_version,
         )
-
-
-def ml_predict_flow(
-    transaction: PredictInputDTO,
-    service: PredictService,
-) -> PredictResultDTO:
-    """전달본과 같은 이름으로 한 건의 전체 예측 흐름을 실행한다."""
-
-    return service.predict(transaction)
-
-
-__all__ = [
-    "PredictService",
-    "PredictionServiceError",
-    "ml_predict_flow",
-]

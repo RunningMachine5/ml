@@ -40,6 +40,3 @@ def shap_decode(shap: dict[str, float]) -> dict[str, float]:
     for field, levels in CATEGORICAL_LEVELS.items():
         decoded[field] = float(sum(shap[f"{field}_{level}"] for level in levels))
     return decoded
-
-
-__all__ = ["shap_decode"]

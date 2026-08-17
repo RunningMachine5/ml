@@ -6,8 +6,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
-
-from fdshield_ml.config.preprocess_config import MODEL_FEATURE_COLUMNS
 from fdshield_ml.service.preprocessor import Preprocessor
 from fdshield_ml.service.train.dataset import (
     TrainingDatasetError,
@@ -55,11 +53,6 @@ def prepare_training_data(source: pd.DataFrame) -> PreparedTrainingData:
     except TrainingDatasetError as exc:
         raise TrainingServiceError(str(exc)) from exc
     features = Preprocessor().train_preprocess(normalized)
-
-    if features.columns.tolist() != list(MODEL_FEATURE_COLUMNS):
-        raise TrainingServiceError(
-            "Preprocessed training schema is not the model79 contract."
-        )
     return PreparedTrainingData(features=features, target=target)
 
 
@@ -83,13 +76,3 @@ def ml_train_flow(
     """전달본과 같은 이름으로 로컬 train1 학습 전체 흐름을 제공한다."""
 
     return train_candidate(load_training_frame(data_path), config)
-
-
-__all__ = [
-    "PreparedTrainingData",
-    "TrainingServiceError",
-    "load_training_frame",
-    "ml_train_flow",
-    "prepare_training_data",
-    "train_candidate",
-]

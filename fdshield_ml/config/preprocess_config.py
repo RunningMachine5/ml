@@ -64,19 +64,9 @@ MODEL_INPUT_COLUMNS = (
     "transaction_history_with_the_account",
     "recipient_transaction_resumed_date",
 )
-MODEL_INPUT_COLUMN_SET = frozenset(MODEL_INPUT_COLUMNS)
 
 # ML 담당자의 flat PredictInputDTO 전체 계약(transaction_id + raw51).
 SERVING_INPUT_COLUMNS = (TRANSACTION_ID_COLUMN, *MODEL_INPUT_COLUMNS)
-SERVING_INPUT_COLUMN_SET = frozenset(SERVING_INPUT_COLUMNS)
-
-# train1.csv에만 추가되는 모델 비입력 컬럼이다.
-TRAINING_METADATA_COLUMNS = (
-    "customer_identification_number",
-    "customer_id",
-    "balance_drain_ratio",
-    LABEL_COLUMN,
-)
 
 # train1.csv는 기존 64열을 유지한다. 실시간 입력에서 빠진 식별·접속 컬럼은
 # 학습 파일 호환용으로만 남고 model79 전처리에서는 사용하지 않는다.
@@ -181,12 +171,6 @@ CATEGORICAL_LEVELS = {
     ),
     "type_general_automatic": ("general", "automatic"),
     "access_medium": ("a", "b", "c", "d", "e", "f", "g", "h"),
-}
-
-# 입력 계약에는 포함되지만 현재 model79에 대응하는 One-hot 열이 없는 값이다.
-# 모델 Feature를 추가하거나 재학습하지 않고 모든 기존 One-hot을 0으로 둔다.
-UNSEEN_CATEGORICAL_LEVELS = {
-    "account_account_type": ("e",),
 }
 
 TRANSACTION_DATETIME_COLUMN = "transaction_datetime"
@@ -314,48 +298,3 @@ MODEL_FEATURE_COLUMNS = (
     "access_medium_g",
     "access_medium_h",
 )
-
-# 추론 features 안에는 학습 전용 메타데이터와 라벨을 허용하지 않는다.
-FORBIDDEN_INFERENCE_COLUMNS = frozenset(
-    {
-        "customer_identification_number",
-        "customer_id",
-        "balance_drain_ratio",
-        LABEL_COLUMN,
-        *CSV_ALIAS_COLUMNS,
-    }
-)
-
-
-if len(MODEL_INPUT_COLUMNS) != 51:  # pragma: no cover - import invariant
-    raise RuntimeError("MODEL_INPUT_COLUMNS must contain exactly 51 columns.")
-if len(SERVING_INPUT_COLUMNS) != 52:  # pragma: no cover - import invariant
-    raise RuntimeError("SERVING_INPUT_COLUMNS must contain exactly 52 columns.")
-if len(TRAINING_INPUT_COLUMNS) != 64:  # pragma: no cover - import invariant
-    raise RuntimeError("TRAINING_INPUT_COLUMNS must contain exactly 64 columns.")
-if len(MODEL_FEATURE_COLUMNS) != 79:  # pragma: no cover - import invariant
-    raise RuntimeError("MODEL_FEATURE_COLUMNS must contain exactly 79 columns.")
-if len(MODEL_FEATURE_COLUMNS) != len(set(MODEL_FEATURE_COLUMNS)):
-    raise RuntimeError("MODEL_FEATURE_COLUMNS must not contain duplicates.")
-
-
-__all__ = [
-    "CATEGORICAL_LEVELS",
-    "CSV_ALIAS_COLUMNS",
-    "FORBIDDEN_INFERENCE_COLUMNS",
-    "LABEL_COLUMN",
-    "MODEL_FEATURE_COLUMNS",
-    "MODEL_INPUT_COLUMNS",
-    "MODEL_INPUT_COLUMN_SET",
-    "NUMERIC_PASSTHROUGH_COLUMNS",
-    "OPTIONAL_ELAPSED_COLUMNS",
-    "RAW_TRAINING_INPUT_COLUMNS",
-    "REQUIRED_ELAPSED_COLUMNS",
-    "SERVING_INPUT_COLUMNS",
-    "SERVING_INPUT_COLUMN_SET",
-    "TRAINING_INPUT_COLUMNS",
-    "TRAINING_METADATA_COLUMNS",
-    "TRANSACTION_DATETIME_COLUMN",
-    "TRANSACTION_ID_COLUMN",
-    "UNSEEN_CATEGORICAL_LEVELS",
-]

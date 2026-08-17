@@ -22,15 +22,11 @@ from fdshield_ml.config.preprocess_config import (
 )
 
 LABEL_COLUMN = CONTRACT_LABEL_COLUMN
-TRANSACTION_ID_COLUMN = "transaction_id"
-TRANSACTION_DATETIME_COLUMN = "transaction_datetime"
 TRAINING_DATA_CONTRACT = "fdshield-train1-raw64-to-model79-v1"
 
 TrainingDatasetKind = Literal["raw"]
 RAW_TRAINING_COLUMNS = tuple(RAW_TRAINING_INPUT_COLUMNS)
 CANONICAL_TRAINING_COLUMNS = tuple(TRAINING_INPUT_COLUMNS)
-RAW_REQUIRED_COLUMNS = frozenset(RAW_TRAINING_COLUMNS)
-RAW_ALLOWED_COLUMNS = RAW_REQUIRED_COLUMNS
 
 
 class TrainingDatasetError(ValueError):
@@ -49,17 +45,11 @@ def detect_training_dataset_kind(
             f"training data contains duplicate columns: {duplicates}"
         )
 
-    if provided in {RAW_TRAINING_COLUMNS, CANONICAL_TRAINING_COLUMNS}:
-        return "raw"
-
     accepted_names = set(RAW_TRAINING_COLUMNS) | set(CANONICAL_TRAINING_COLUMNS)
     missing = sorted(set(RAW_TRAINING_COLUMNS) - set(provided))
     unknown = sorted(set(provided) - accepted_names)
     if not missing and not unknown:
-        raise TrainingDatasetError(
-            "train1 training columns are out of order; "
-            f"expected={list(RAW_TRAINING_COLUMNS)}"
-        )
+        return "raw"
     raise TrainingDatasetError(
         f"invalid train1 raw64 training schema: missing={missing}, unknown={unknown}"
     )
@@ -113,20 +103,3 @@ def validate_binary_target(source: pd.DataFrame, *, context: str) -> pd.Series:
             f"found={sorted(classes, key=str)}"
         )
     return numeric.astype("int8").rename(LABEL_COLUMN)
-
-
-__all__ = [
-    "CANONICAL_TRAINING_COLUMNS",
-    "LABEL_COLUMN",
-    "RAW_ALLOWED_COLUMNS",
-    "RAW_REQUIRED_COLUMNS",
-    "RAW_TRAINING_COLUMNS",
-    "TRAINING_DATA_CONTRACT",
-    "TRANSACTION_DATETIME_COLUMN",
-    "TRANSACTION_ID_COLUMN",
-    "TrainingDatasetError",
-    "TrainingDatasetKind",
-    "detect_training_dataset_kind",
-    "normalize_training_frame",
-    "validate_binary_target",
-]

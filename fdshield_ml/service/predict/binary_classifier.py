@@ -51,9 +51,3 @@ def predict(model: object, data: pd.DataFrame) -> dict[str, object]:
         "predict_proba": float(probabilities[0, 1]),
         "shap_values": shap_values,
     }
-
-
-__all__ = [
-    "BinaryClassifierError",
-    "predict",
-]

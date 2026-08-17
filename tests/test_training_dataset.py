@@ -54,7 +54,7 @@ def test_train1_alias_contract_normalizes_to_canonical_raw64_order(
     assert TRAINING_DATA_CONTRACT == "fdshield-train1-raw64-to-model79-v1"
 
 
-@pytest.mark.parametrize("mutation", ["missing", "extra", "order"])
+@pytest.mark.parametrize("mutation", ["missing", "extra"])
 def test_train1_contract_rejects_schema_drift(
     raw_features_factory: RawFeaturesFactory,
     mutation: str,
@@ -64,13 +64,20 @@ def test_train1_contract_rejects_schema_drift(
         source = source.drop(columns=source.columns[0])
     elif mutation == "extra":
         source["unexpected"] = 0
-    else:
-        columns = source.columns.tolist()
-        columns[0], columns[1] = columns[1], columns[0]
-        source = source.loc[:, columns]
-
     with pytest.raises(TrainingDatasetError):
         detect_training_dataset_kind(source.columns)
+
+
+def test_train1_contract_normalizes_input_column_order(
+    raw_features_factory: RawFeaturesFactory,
+) -> None:
+    source = _training_frame(raw_features_factory)
+    columns = source.columns.tolist()
+    columns[0], columns[1] = columns[1], columns[0]
+
+    normalized = normalize_training_frame(source.loc[:, columns])
+
+    assert normalized.columns.tolist() == list(TRAINING_INPUT_COLUMNS)
 
 
 @pytest.mark.parametrize("invalid_value", [0.5, "fraud", float("inf")])
