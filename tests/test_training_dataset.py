@@ -10,13 +10,13 @@ from fdshield_ml.config.preprocess_config import (
     TRAINING_INPUT_COLUMNS,
 )
 from fdshield_ml.service.train.dataset import (
-    LABEL_COLUMN,
     TRAINING_DATA_CONTRACT,
     TrainingDatasetError,
     detect_training_dataset_kind,
     normalize_training_frame,
     validate_binary_target,
 )
+from tests.conftest import training_row_from_raw51
 
 RawFeaturesFactory = Callable[..., dict[str, object]]
 
@@ -29,16 +29,10 @@ def _training_frame(
     target = labels or [0, 1, 0, 1]
     rows: list[dict[str, object]] = []
     for index, label in enumerate(target, start=1):
-        row = {
-            "transaction_id": index,
-            **raw_features_factory(),
-            "customer_identification_number": f"synthetic-{index}",
-            "customer_id": index,
-            "balance_drain_ratio": 0.1,
-            LABEL_COLUMN: label,
-        }
-        row["flag_deposit_more_than_tenmillion"] = row.pop(
-            "flag_deposit_more_than_ten_million"
+        row = training_row_from_raw51(
+            raw_features_factory(),
+            transaction_id=index,
+            is_fraud=label,
         )
         rows.append(row)
     return pd.DataFrame(rows).loc[:, RAW_TRAINING_INPUT_COLUMNS]
@@ -57,7 +51,7 @@ def test_train1_alias_contract_normalizes_to_canonical_raw64_order(
     assert "flag_deposit_more_than_tenmillion" not in normalized
     assert "flag_deposit_more_than_ten_million" in normalized
     assert normalized["transaction_id"].tolist() == [1, 2, 3, 4]
-    assert TRAINING_DATA_CONTRACT == "fdshield-train1-raw64-to-model80-v1"
+    assert TRAINING_DATA_CONTRACT == "fdshield-train1-raw64-to-model79-v1"
 
 
 @pytest.mark.parametrize("mutation", ["missing", "extra", "order"])
@@ -114,7 +108,7 @@ def test_training_transaction_ids_are_preserved_as_metadata(
     assert normalized["transaction_id"].tolist() == ["T00000001", 1, "DB-1", "DB-1"]
 
 
-def test_legacy_model80_plus_label_csv_is_not_a_training_contract() -> None:
+def test_preprocessed_model_columns_plus_label_are_not_a_training_contract() -> None:
     legacy_columns = [f"feature_{index}" for index in range(80)] + ["Is_Fraud"]
 
     with pytest.raises(TrainingDatasetError, match="raw64"):

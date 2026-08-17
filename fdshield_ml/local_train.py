@@ -18,7 +18,7 @@ from fdshield_ml.service.train.train_service import TrainingServiceError, ml_tra
 
 DEFAULT_DATA_PATH = Path("data/open/train1.csv")
 DEFAULT_OUTPUT_PATH = Path("models/local-training-output")
-FEATURE_CONTRACT_VERSION = "raw60-model80-v1"
+FEATURE_CONTRACT_VERSION = "raw51-model79-v1"
 
 
 def _sha256(path: Path) -> str:
@@ -96,7 +96,7 @@ def train_local_bundle(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Train a local model80 bundle from train1.csv without MLflow.",
+        description="Train a local model79 bundle from train1.csv without MLflow.",
     )
     parser.add_argument("--data", type=Path, default=DEFAULT_DATA_PATH)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_PATH)

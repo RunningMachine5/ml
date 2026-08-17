@@ -107,7 +107,7 @@ def _model_feature_names(model: object) -> tuple[str, ...] | None:
 
 
 def champion_contract_matches(model: object) -> bool:
-    """현재 champion이 같은 model80 입력 계약인지 확인한다."""
+    """현재 champion이 같은 model79 입력 계약인지 확인한다."""
 
     names = _model_feature_names(model)
     if names is not None:
@@ -124,7 +124,7 @@ def evaluate_champion(
     features: pd.DataFrame,
     target: pd.Series,
 ) -> ChampionEvaluation:
-    """같은 검증 행에서 model80 champion을 평가한다."""
+    """같은 검증 행에서 model79 champion을 평가한다."""
 
     try:
         version = client.get_model_version_by_alias(

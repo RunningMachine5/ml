@@ -1,4 +1,4 @@
-"""전처리가 끝난 model80 데이터로 XGBoost 사기 탐지 모델을 학습한다.
+"""전처리가 끝난 model79 데이터로 XGBoost 사기 탐지 모델을 학습한다.
 
 ML 담당자 전달본의 ``train_model`` 흐름과 하이퍼파라미터를 유지한다. GCS,
 MLflow, Backend Callback 같은 운영 인프라는 이 파일에서 다루지 않는다.
@@ -140,7 +140,7 @@ def train_model(
     label: pd.Series,
     config: ModelTrainingConfig | None = None,
 ) -> ModelTrainingResult:
-    """model80 데이터와 라벨을 분할해 XGBoost 후보 모델을 학습한다."""
+    """model79 데이터와 라벨을 분할해 XGBoost 후보 모델을 학습한다."""
 
     settings = config or ModelTrainingConfig()
     try:

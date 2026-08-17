@@ -1,4 +1,4 @@
-"""전처리가 끝난 model80 한 건의 확률과 SHAP 기여도를 계산한다."""
+"""전처리가 끝난 model79 한 건의 확률과 SHAP 기여도를 계산한다."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ class BinaryClassifierError(ValueError):
 
 
 def predict(model: object, data: pd.DataFrame) -> dict[str, object]:
-    """전처리된 model80 한 건의 확률과 model80 SHAP 기여도를 계산한다."""
+    """전처리된 model79 한 건의 확률과 model79 SHAP 기여도를 계산한다."""
 
     probabilities = np.asarray(model.predict_proba(data), dtype="float64")
     if probabilities.shape != (1, 2) or not np.isfinite(probabilities).all():

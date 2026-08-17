@@ -15,7 +15,7 @@ from fdshield_ml import local_train
 
 class FakeModel:
     def save_model(self, path: str) -> None:
-        Path(path).write_text('{"model":"fake-model80"}', encoding="utf-8")
+        Path(path).write_text('{"model":"fake-model79"}', encoding="utf-8")
 
 
 def _fake_training_result() -> SimpleNamespace:
@@ -61,8 +61,8 @@ def test_train_local_bundle_saves_and_validates_serving_bundle(
         "bundle_schema_version": 1,
         "decision_threshold": 0.5,
         "decision_threshold_source": "trained_model",
-        "feature_contract_version": "raw60-model80-v1",
-        "feature_count": 80,
+        "feature_contract_version": "raw51-model79-v1",
+        "feature_count": 79,
         "model_file": "model.json",
         "model_format": "xgboost-json",
         "model_name": "fdshield-fraud-detector-v2",

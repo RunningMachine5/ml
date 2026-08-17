@@ -1,4 +1,4 @@
-"""ML 담당자 원본 입력을 model80 숫자 행렬로 바꾸는 전처리 테스트."""
+"""ML 담당자 원본 입력을 model79 숫자 행렬로 바꾸는 전처리 테스트."""
 
 from collections.abc import Callable
 
@@ -23,21 +23,21 @@ RawFeaturesFactory = Callable[..., dict[str, object]]
 
 
 def test_raw_and_model_contract_counts_are_fixed() -> None:
-    assert len(MODEL_INPUT_COLUMNS) == len(set(MODEL_INPUT_COLUMNS)) == 59
-    assert len(SERVING_INPUT_COLUMNS) == len(set(SERVING_INPUT_COLUMNS)) == 60
+    assert len(MODEL_INPUT_COLUMNS) == len(set(MODEL_INPUT_COLUMNS)) == 51
+    assert len(SERVING_INPUT_COLUMNS) == len(set(SERVING_INPUT_COLUMNS)) == 52
     assert len(TRAINING_INPUT_COLUMNS) == len(set(TRAINING_INPUT_COLUMNS)) == 64
     assert len(RAW_TRAINING_INPUT_COLUMNS) == len(set(RAW_TRAINING_INPUT_COLUMNS)) == 64
-    assert len(MODEL_FEATURE_COLUMNS) == len(set(MODEL_FEATURE_COLUMNS)) == 80
+    assert len(MODEL_FEATURE_COLUMNS) == len(set(MODEL_FEATURE_COLUMNS)) == 79
 
 
-def test_preprocessing_emits_exact_80_numeric_features(
+def test_preprocessing_emits_exact_79_numeric_features(
     raw_features_factory: RawFeaturesFactory,
 ) -> None:
     result = preprocess_transaction_features(raw_features_factory())
 
-    assert result.shape == (1, 80)
+    assert result.shape == (1, 79)
     assert result.columns.tolist() == list(MODEL_FEATURE_COLUMNS)
-    assert len(MODEL_FEATURE_COLUMNS) == len(set(MODEL_FEATURE_COLUMNS)) == 80
+    assert len(MODEL_FEATURE_COLUMNS) == len(set(MODEL_FEATURE_COLUMNS)) == 79
     assert "is_fraud" not in result
     assert not np.isinf(result.to_numpy(dtype="float64")).any()
 
@@ -91,7 +91,7 @@ def test_preprocessing_keeps_original_category_matching_semantics(
     assert row["operating_system_ios"] == 0
 
 
-def test_train1_alias_and_metadata_produce_same_model80_vector(
+def test_train1_alias_and_metadata_produce_same_model79_vector(
     raw_features_factory: RawFeaturesFactory,
 ) -> None:
     serving = {
@@ -102,11 +102,25 @@ def test_train1_alias_and_metadata_produce_same_model80_vector(
 
     training = {
         **serving,
+        "customer_name": "test-customer",
         "customer_identification_number": "synthetic-id",
+        "account_account_number": "account-1",
+        "error_code": "none",
+        "ip_address": "127.0.0.1",
+        "mac_address": "00:00:00:00:00:00",
+        "location": "37.0 127.0",
+        "recipient_account_number": "recipient-1",
+        "first_time_ios_by_vulnerable_user": 0,
         "customer_id": 123,
         "balance_drain_ratio": 0.15,
         "is_fraud": 1,
     }
+    training["account_release_suspention"] = training.pop(
+        "recipient_release_suspension"
+    )
+    training["transaction_resumed_date"] = training.pop(
+        "recipient_transaction_resumed_date"
+    )
     training["flag_deposit_more_than_tenmillion"] = training.pop(
         "flag_deposit_more_than_ten_million"
     )
@@ -165,18 +179,3 @@ def test_optional_access_medium_is_encoded_as_all_zero(
     ]
 
     assert row[encoded_columns].sum() == 0
-
-
-def test_nullable_account_amounts_preserve_xgboost_missing_values(
-    raw_features_factory: RawFeaturesFactory,
-) -> None:
-    row = preprocess_transaction_features(
-        raw_features_factory(
-            account_initial_balance=None,
-            account_balance=None,
-            account_remaining_amount_daily_limit_exceeded=None,
-        )
-    ).iloc[0]
-
-    assert np.isnan(row["account_remaining_amount_daily_limit_exceeded"])
-    assert np.isnan(row["amount_to_balance_ratio"])

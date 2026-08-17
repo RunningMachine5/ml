@@ -18,7 +18,7 @@ def ml_input(
     transaction: PredictInputDTO,
     request: Request,
 ) -> PredictResultDTO:
-    """ML 담당자의 flat raw60 요청을 받아 model80 예측 결과를 반환한다."""
+    """ML 담당자의 flat raw52 요청을 받아 model79 예측 결과를 반환한다."""
 
     service: PredictService = request.app.state.predict_service
     try:
