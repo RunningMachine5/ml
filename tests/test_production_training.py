@@ -91,7 +91,6 @@ def _install_fake_mlflow(
     monkeypatch.setattr(
         mlflow_integration, "configure_tracking", lambda _: "https://mlflow"
     )
-    monkeypatch.setattr(mlflow_integration, "verify_connection", lambda: 1)
     monkeypatch.setattr(mlflow_integration.mlflow, "set_experiment", lambda _: None)
     monkeypatch.setattr(
         mlflow_integration.mlflow,

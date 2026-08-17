@@ -80,9 +80,8 @@ def run_production_training(
 
     try:
         mlflow_integration.configure_tracking(None)
-        mlflow_integration.verify_connection()
         candidate = ml_train_flow(data_path, config.model)
-        client = mlflow_integration.create_registry_client()
+        client = mlflow_integration.MlflowClient()
         champion = mlflow_integration.evaluate_champion(
             client,
             registered_model_name=config.registered_model_name,
@@ -125,12 +124,3 @@ def run_production_training(
         champion_model_version=champion.model_version,
         champion_metrics=champion.metrics,
     )
-
-
-__all__ = [
-    "ProductionTrainingConfig",
-    "ProductionTrainingError",
-    "ProductionTrainingResult",
-    "promotion_recommendation",
-    "run_production_training",
-]

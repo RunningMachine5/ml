@@ -7,7 +7,6 @@ from fdshield_ml.dto.predict_result import PredictResultDTO
 from fdshield_ml.service.predict.predict_service import (
     PredictionServiceError,
     PredictService,
-    ml_predict_flow,
 )
 
 router = APIRouter(prefix="/ml", tags=["machine learning"])
@@ -22,9 +21,6 @@ def ml_input(
 
     service: PredictService = request.app.state.predict_service
     try:
-        return ml_predict_flow(transaction, service)
+        return service.predict(transaction)
     except PredictionServiceError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-
-__all__ = ["router"]

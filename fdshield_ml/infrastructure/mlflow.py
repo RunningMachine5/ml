@@ -89,10 +89,6 @@ def verify_connection() -> int:
     return len(MlflowClient().search_experiments(max_results=10))
 
 
-def create_registry_client() -> MlflowClient:
-    return MlflowClient()
-
-
 def _model_feature_names(model: object) -> tuple[str, ...] | None:
     names = getattr(model, "feature_names_in_", None)
     if names is not None:
@@ -296,16 +292,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
-__all__ = [
-    "ChampionEvaluation",
-    "MlflowIntegrationError",
-    "RegisteredCandidate",
-    "champion_contract_matches",
-    "configure_tracking",
-    "create_registry_client",
-    "evaluate_champion",
-    "register_candidate",
-    "verify_connection",
-]

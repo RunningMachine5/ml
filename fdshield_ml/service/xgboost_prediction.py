@@ -27,6 +27,3 @@ def prediction_iteration_range(model: object, booster: object) -> tuple[int, int
     if rounds < 1:
         raise ValueError("XGBoost booster must contain at least one tree round")
     return (0, rounds)
-
-
-__all__ = ["prediction_iteration_range"]

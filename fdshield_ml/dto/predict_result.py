@@ -18,6 +18,3 @@ class HealthResponse(BaseModel):
     """Cloud Run과 로컬 실행에서 사용하는 상태 응답."""
 
     status: str
-
-
-__all__ = ["HealthResponse", "PredictResultDTO"]
