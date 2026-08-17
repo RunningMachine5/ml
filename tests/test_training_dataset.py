@@ -12,9 +12,9 @@ from fdshield_ml.config.preprocess_config import (
 from fdshield_ml.service.train.dataset import (
     TRAINING_DATA_CONTRACT,
     TrainingDatasetError,
-    detect_training_dataset_kind,
     normalize_training_frame,
     validate_binary_target,
+    validate_training_columns,
 )
 from tests.conftest import training_row_from_raw51
 
@@ -43,7 +43,7 @@ def test_train1_alias_contract_normalizes_to_canonical_raw64_order(
 ) -> None:
     source = _training_frame(raw_features_factory)
 
-    assert detect_training_dataset_kind(source.columns) == "raw"
+    validate_training_columns(source.columns)
     normalized = normalize_training_frame(source)
 
     assert normalized.columns.tolist() == list(TRAINING_INPUT_COLUMNS)
@@ -65,7 +65,7 @@ def test_train1_contract_rejects_schema_drift(
     elif mutation == "extra":
         source["unexpected"] = 0
     with pytest.raises(TrainingDatasetError):
-        detect_training_dataset_kind(source.columns)
+        validate_training_columns(source.columns)
 
 
 def test_train1_contract_normalizes_input_column_order(
@@ -119,4 +119,4 @@ def test_preprocessed_model_columns_plus_label_are_not_a_training_contract() -> 
     legacy_columns = [f"feature_{index}" for index in range(80)] + ["Is_Fraud"]
 
     with pytest.raises(TrainingDatasetError, match="raw64"):
-        detect_training_dataset_kind(legacy_columns)
+        validate_training_columns(legacy_columns)

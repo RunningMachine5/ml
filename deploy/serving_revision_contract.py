@@ -246,7 +246,7 @@ def _append_github_env(path: str, values: Mapping[str, str]) -> None:
 
 def _resolve_command(args: argparse.Namespace) -> None:
     service = _load_json(args.service)
-    revision, url = resolve_tag_target(service, args.tag)
+    revision, _ = resolve_tag_target(service, args.tag)
     if args.require_present and not revision:
         raise ServingRevisionContractError(
             f"tag {args.tag!r} was not created by the Cloud Run deployment"
@@ -255,7 +255,6 @@ def _resolve_command(args: argparse.Namespace) -> None:
         args.github_env,
         {
             args.revision_env: revision,
-            args.url_env: url,
         },
     )
     if revision:
@@ -290,7 +289,6 @@ def _parser() -> argparse.ArgumentParser:
     resolve.add_argument("--tag", required=True)
     resolve.add_argument("--github-env", required=True)
     resolve.add_argument("--revision-env", default="TAGGED_REVISION")
-    resolve.add_argument("--url-env", default="TAGGED_URL")
     resolve.add_argument("--require-present", action="store_true")
     resolve.set_defaults(handler=_resolve_command)
 

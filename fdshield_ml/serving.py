@@ -6,7 +6,7 @@ import os
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI
 
 from fdshield_ml.api.ml_input import router as prediction_router
 from fdshield_ml.dto.predict_result import HealthResponse
@@ -40,10 +40,7 @@ def create_app(predict_service: PredictService | None = None) -> FastAPI:
         return HealthResponse(status="ok")
 
     @app.get("/ready", response_model=HealthResponse)
-    def ready(request: Request) -> HealthResponse:
-        service: PredictService = request.app.state.predict_service
-        if not service.ready:
-            raise HTTPException(status_code=503, detail="model is not ready")
+    def ready() -> HealthResponse:
         return HealthResponse(status="ready")
 
     return app

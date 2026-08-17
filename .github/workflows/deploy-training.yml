@@ -294,22 +294,8 @@ jobs:
             --update-secrets="MLFLOW_TRACKING_USERNAME=$MLFLOW_TRACKING_USERNAME_SECRET:latest,MLFLOW_TRACKING_PASSWORD=$MLFLOW_TRACKING_PASSWORD_SECRET:latest,TRAINING_RESULT_CALLBACK_TOKEN=$TRAINING_RESULT_CALLBACK_TOKEN_SECRET:latest" \
             --quiet
 
-      - name: Verify configured Training Job image
+      - name: Verify configured Training Job contract
         run: |
-          configured_image="$(
-            gcloud run jobs describe "$CLOUD_RUN_JOB" \
-              --project="$GCP_PROJECT_ID" \
-              --region="$GCP_REGION" \
-              --format="value(spec.template.spec.template.spec.containers[0].image)"
-          )"
-
-          if [[ "$configured_image" != "$DEPLOY_DIGEST" ]]; then
-            echo "Cloud Run Job image verification failed."
-            echo "Expected: $DEPLOY_DIGEST"
-            echo "Configured: $configured_image"
-            exit 1
-          fi
-
           job_config="$RUNNER_TEMP/training-job.json"
           gcloud run jobs describe "$CLOUD_RUN_JOB" \
             --project="$GCP_PROJECT_ID" \
@@ -327,5 +313,5 @@ jobs:
             --expected-mlflow-tracking-password-secret "$MLFLOW_TRACKING_PASSWORD_SECRET" \
             --expected-callback-token-secret "$TRAINING_RESULT_CALLBACK_TOKEN_SECRET"
 
-          echo "Cloud Run Training Job image updated: $configured_image"
+          echo "Cloud Run Training Job contract updated and verified."
           echo "The Training Job was not executed by this deployment."

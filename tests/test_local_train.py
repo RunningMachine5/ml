@@ -60,8 +60,6 @@ def test_train_local_bundle_saves_and_validates_serving_bundle(
     assert manifest == {
         "bundle_schema_version": 1,
         "decision_threshold": 0.5,
-        "decision_threshold_source": "trained_model",
-        "feature_contract_version": "raw51-model79-v1",
         "feature_count": 79,
         "model_file": "model.json",
         "model_format": "xgboost-json",

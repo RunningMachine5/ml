@@ -18,7 +18,6 @@ from fdshield_ml.service.train.train_service import TrainingServiceError, ml_tra
 
 DEFAULT_DATA_PATH = Path("data/open/train1.csv")
 DEFAULT_OUTPUT_PATH = Path("models/local-training-output")
-FEATURE_CONTRACT_VERSION = "raw51-model79-v1"
 
 
 def _sha256(path: Path) -> str:
@@ -75,9 +74,7 @@ def train_local_bundle(
         "model_file": model_path.name,
         "model_sha256": _sha256(model_path),
         "decision_threshold": result.decision_threshold,
-        "decision_threshold_source": "trained_model",
         "feature_count": len(MODEL_FEATURE_COLUMNS),
-        "feature_contract_version": FEATURE_CONTRACT_VERSION,
     }
     (bundle_path / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True),

@@ -7,8 +7,6 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
 import numpy as np
 import pandas as pd
 
@@ -24,7 +22,6 @@ from fdshield_ml.config.preprocess_config import (
 LABEL_COLUMN = CONTRACT_LABEL_COLUMN
 TRAINING_DATA_CONTRACT = "fdshield-train1-raw64-to-model79-v1"
 
-TrainingDatasetKind = Literal["raw"]
 RAW_TRAINING_COLUMNS = tuple(RAW_TRAINING_INPUT_COLUMNS)
 CANONICAL_TRAINING_COLUMNS = tuple(TRAINING_INPUT_COLUMNS)
 
@@ -33,10 +30,10 @@ class TrainingDatasetError(ValueError):
     """학습 CSV가 ``train1.csv`` 계약을 충족하지 않을 때 발생한다."""
 
 
-def detect_training_dataset_kind(
+def validate_training_columns(
     columns: pd.Index | list[str] | tuple[str, ...],
-) -> TrainingDatasetKind:
-    """실제 또는 alias 정규화 후의 train1 64열 계약만 허용한다."""
+) -> None:
+    """실제 또는 alias 정규화 후의 train1 64열 계약을 검증한다."""
 
     provided = tuple(columns)
     duplicates = sorted({column for column in provided if provided.count(column) > 1})
@@ -49,7 +46,7 @@ def detect_training_dataset_kind(
     missing = sorted(set(RAW_TRAINING_COLUMNS) - set(provided))
     unknown = sorted(set(provided) - accepted_names)
     if not missing and not unknown:
-        return "raw"
+        return
     raise TrainingDatasetError(
         f"invalid train1 raw64 training schema: missing={missing}, unknown={unknown}"
     )
@@ -64,7 +61,7 @@ def normalize_training_frame(source: pd.DataFrame) -> pd.DataFrame:
 
     if not isinstance(source, pd.DataFrame):
         raise TypeError("normalize_training_frame expects a pandas DataFrame")
-    detect_training_dataset_kind(source.columns)
+    validate_training_columns(source.columns)
     normalized = source.rename(columns=CSV_ALIAS_COLUMNS).copy()
     if normalized.columns.duplicated().any():
         duplicates = normalized.columns[normalized.columns.duplicated()].tolist()
