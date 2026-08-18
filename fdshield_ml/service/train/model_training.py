@@ -20,7 +20,6 @@ from sklearn.metrics import (
 from sklearn.model_selection import train_test_split
 from xgboost import XGBClassifier
 
-from fdshield_ml.service.decision_threshold import validate_decision_threshold
 from fdshield_ml.service.xgboost_prediction import prediction_iteration_range
 
 DECISION_THRESHOLD = 0.5
@@ -84,15 +83,10 @@ class ModelTrainingResult:
 def evaluation_metrics(
     target: pd.Series,
     probability: pd.Series,
-    threshold: float,
 ) -> dict[str, float]:
-    """후보와 현재 운영 모델에 공통으로 사용하는 분류 지표를 계산한다."""
+    """후보와 현재 운영 모델을 고정 임계값 0.5로 평가한다."""
 
-    threshold = validate_decision_threshold(
-        threshold,
-        source="evaluation decision threshold",
-    )
-    predicted = probability.ge(threshold).astype("int8")
+    predicted = probability.ge(DECISION_THRESHOLD).astype("int8")
     tn, fp, _, _ = confusion_matrix(target, predicted, labels=[0, 1]).ravel()
     false_positive_rate = fp / (fp + tn) if fp + tn else 0.0
     return {
@@ -104,7 +98,7 @@ def evaluation_metrics(
         ),
         "validation_f1": float(f1_score(target, predicted, zero_division=0)),
         "validation_fpr": float(false_positive_rate),
-        "decision_threshold": threshold,
+        "decision_threshold": DECISION_THRESHOLD,
     }
 
 
@@ -169,7 +163,7 @@ def train_model(
         model=model,
         validation_features=x_valid,
         validation_target=y_valid,
-        metrics=evaluation_metrics(y_valid, probability, DECISION_THRESHOLD),
+        metrics=evaluation_metrics(y_valid, probability),
         decision_threshold=DECISION_THRESHOLD,
         train_rows=len(x_train),
         validation_rows=len(x_valid),
