@@ -15,10 +15,6 @@ from mlflow.models import infer_signature
 from mlflow.tracking import MlflowClient
 
 from fdshield_ml.config.preprocess_config import MODEL_FEATURE_COLUMNS
-from fdshield_ml.service.decision_threshold import (
-    DECISION_THRESHOLD_TAG,
-    resolve_model_decision_threshold,
-)
 from fdshield_ml.service.train.dataset import TRAINING_DATA_CONTRACT
 from fdshield_ml.service.train.model_training import (
     VALIDATION_FRACTION,
@@ -139,16 +135,8 @@ def evaluate_champion(
         champion = mlflow.sklearn.load_model(
             f"models:/{registered_model_name}/{champion_version}"
         )
-        version = client.get_model_version(
-            registered_model_name,
-            str(champion_version),
-        )
         if not champion_contract_matches(champion):
             return ChampionEvaluation(champion_version, None)
-        threshold = resolve_model_decision_threshold(
-            champion,
-            model_version_tags=getattr(version, "tags", None),
-        )
         probability = pd.Series(
             champion.predict_proba(features)[:, 1],  # type: ignore[attr-defined]
             index=target.index,
@@ -159,7 +147,7 @@ def evaluate_champion(
         ) from exc
     return ChampionEvaluation(
         champion_version,
-        evaluation_metrics(target, probability, threshold),
+        evaluation_metrics(target, probability),
     )
 
 
@@ -263,7 +251,7 @@ def register_candidate(
     version_tags = {
         "validation_status": "passed" if validation_passed else "failed",
         "promotion_recommendation": recommendation,
-        DECISION_THRESHOLD_TAG: repr(candidate.decision_threshold),
+        "decision_threshold": repr(candidate.decision_threshold),
         "feature_contract": TRAINING_DATA_CONTRACT,
     }
     for key, value in version_tags.items():

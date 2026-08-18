@@ -277,7 +277,7 @@ def test_train1_registers_candidate_with_comparison_metadata(
     assert calls["run_tags"]["champion_comparison_status"] == "not_available"
 
 
-def test_champion_evaluation_uses_registered_model_threshold_tag(
+def test_champion_evaluation_uses_fixed_threshold(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class Model79Champion:
@@ -292,11 +292,6 @@ def test_champion_evaluation_uses_registered_model_threshold_tag(
             assert name == "fdshield-fraud-detector-v2"
             assert alias == "champion"
             return SimpleNamespace(version="5")
-
-        def get_model_version(self, name: str, version: str) -> object:
-            assert name == "fdshield-fraud-detector-v2"
-            assert version == "5"
-            return SimpleNamespace(tags={"decision_threshold": "0.65"})
 
     monkeypatch.setattr(
         mlflow_integration.mlflow.sklearn,
@@ -314,7 +309,7 @@ def test_champion_evaluation_uses_registered_model_threshold_tag(
 
     assert evaluation.model_version == 5
     assert evaluation.metrics is not None
-    assert evaluation.metrics["decision_threshold"] == pytest.approx(0.65)
+    assert evaluation.metrics["decision_threshold"] == pytest.approx(0.5)
     assert evaluation.metrics["validation_recall"] == pytest.approx(1.0)
 
 
@@ -329,11 +324,6 @@ def test_legacy_91_feature_champion_comparison_is_skipped(
             assert name == "fdshield-fraud-detector-v2"
             assert alias == "champion"
             return SimpleNamespace(version="5")
-
-        def get_model_version(self, name: str, version: str) -> object:
-            assert name == "fdshield-fraud-detector-v2"
-            assert version == "5"
-            return SimpleNamespace(tags={"decision_threshold": "0.55"})
 
     monkeypatch.setattr(
         mlflow_integration.mlflow.sklearn,
