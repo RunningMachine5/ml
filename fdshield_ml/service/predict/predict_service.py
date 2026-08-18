@@ -1,23 +1,19 @@
-"""전처리, 이진 분류, SHAP 후처리를 잇는 ML 예측 흐름."""
+"""
+[ML 예측 서비스]
+컨트롤러 -> 전처리 -> 추론 -> 후처리 흐름을 담당한다.
+"""
 
 from __future__ import annotations
 
 from fdshield_ml.dto.predict_input import PredictInputDTO
 from fdshield_ml.dto.predict_result import PredictResultDTO
-from fdshield_ml.service.decision_threshold import (
-    DecisionThresholdError,
-    resolve_model_decision_threshold,
-)
-from fdshield_ml.service.predict.binary_classifier import (
-    BinaryClassifierError,
-    predict,
-)
+from fdshield_ml.service.predict.binary_classifier import predict
 from fdshield_ml.service.predict.predict_postprocessor import shap_decode
 from fdshield_ml.service.preprocessor import Preprocessor
 
 
 class PredictionServiceError(RuntimeError):
-    """모델 로딩 또는 예측 결과가 Serving 계약을 만족하지 않을 때 발생한다."""
+    """모델 파일을 불러오지 못했을 때 발생한다."""
 
 
 class PredictService:
@@ -29,41 +25,23 @@ class PredictService:
         model: object,
         model_name: str,
         model_version: str,
-        model_version_tags: dict[str, str] | None = None,
     ) -> None:
-        if not model_name.strip() or not model_version.strip():
-            raise ValueError("model_name and model_version are required")
-        if not hasattr(model, "predict_proba"):
-            raise TypeError("The model must provide predict_proba().")
-        try:
-            threshold = resolve_model_decision_threshold(
-                model,
-                model_version_tags=model_version_tags,
-            )
-        except DecisionThresholdError as exc:
-            raise PredictionServiceError(str(exc)) from exc
         self.model = model
         self.model_name = model_name
         self.model_version = model_version
-        self.threshold = threshold
         self.preprocessor = Preprocessor()
 
     def predict(self, request: PredictInputDTO) -> PredictResultDTO:
         """거래 한 건을 전처리해 예측·기여도를 반환한다."""
 
-        features = self.preprocessor.predict_preprocess(request)
-        try:
-            prediction = predict(self.model, features)
-        except BinaryClassifierError as exc:
-            raise PredictionServiceError(str(exc)) from exc
-        except Exception as exc:
-            raise PredictionServiceError("Model prediction failed") from exc
-        fraud_probability = float(prediction["predict_proba"])
+        encoded_data = self.preprocessor.predict_preprocess(request)
+        prediction = predict(self.model, encoded_data)
+        shap_values = shap_decode(prediction["shap_values"])
+
         return PredictResultDTO(
-            transaction_id=request.transaction_id,
-            predict_result=int(fraud_probability >= self.threshold),
-            predict_proba=fraud_probability,
-            shap_values=shap_decode(prediction["shap_values"]),
+            predict_result=prediction["predict_result"],
+            predict_proba=prediction["predict_proba"],
+            shap_values=shap_values,
             model_name=self.model_name,
             model_version=self.model_version,
         )

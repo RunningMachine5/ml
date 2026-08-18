@@ -2,23 +2,19 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
-from pydantic import BaseModel, ConfigDict, Field
-
-FeatureValue = str | int | float | bool | datetime | timedelta | None
+from pydantic import BaseModel, ConfigDict
 
 class PredictInputDTO(BaseModel):
-    """거래 ID와 Backend raw51을 받는 추론 요청.
+    """Backend가 계산한 raw51 피처를 받는 추론 요청.
 
     모델 전처리에 쓰지 않는 고객명·계좌번호·접속 식별값은 받지 않는다.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    # Backend DB가 생성한 양의 정수 PK만 추론 상관관계 ID로 허용한다.
-    transaction_id: int = Field(strict=True, gt=0)
-    customer_birth_date: datetime
+    customer_birth_date: date
     customer_gender: str
     customer_registration_datetime: datetime
     customer_credit_rating: int
@@ -41,7 +37,7 @@ class PredictInputDTO(BaseModel):
     account_creation_datetime: datetime
     account_initial_balance: int
     account_balance: int
-    account_indicator_release_limit_excess: int
+    account_indicator_release_limit_excess: bool
     account_amount_daily_limit: int
     account_remaining_amount_daily_limit_exceeded: int
     account_indicator_openbanking: bool
@@ -70,7 +66,5 @@ class PredictInputDTO(BaseModel):
     transaction_history_with_the_account: int
     recipient_transaction_resumed_date: datetime | None
 
-    def feature_values(self) -> dict[str, FeatureValue]:
-        """식별용 transaction_id를 제외한 공용 전처리 입력을 반환한다."""
 
-        return self.model_dump(exclude={"transaction_id"})
+__all__ = ["PredictInputDTO"]

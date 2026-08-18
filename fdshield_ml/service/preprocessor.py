@@ -25,7 +25,7 @@ class Preprocessor:
     def predict_preprocess(self, transaction: object) -> pd.DataFrame:
         """PredictInputDTO 한 건을 model79 행렬로 변환한다."""
 
-        return preprocess_transaction_features(transaction.feature_values())
+        return preprocess_transaction_features(transaction.model_dump())
 
     def train_preprocess(self, frame: pd.DataFrame) -> pd.DataFrame:
         """raw64 학습 DataFrame을 model79 행렬로 변환한다."""
