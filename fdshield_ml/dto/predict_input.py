@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from pydantic import BaseModel, ConfigDict
 
@@ -14,7 +14,7 @@ class PredictInputDTO(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    customer_birth_date: datetime
+    customer_birth_date: date
     customer_gender: str
     customer_registration_datetime: datetime
     customer_credit_rating: int
@@ -37,7 +37,7 @@ class PredictInputDTO(BaseModel):
     account_creation_datetime: datetime
     account_initial_balance: int
     account_balance: int
-    account_indicator_release_limit_excess: int
+    account_indicator_release_limit_excess: bool
     account_amount_daily_limit: int
     account_remaining_amount_daily_limit_exceeded: int
     account_indicator_openbanking: bool
