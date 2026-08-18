@@ -20,10 +20,7 @@ from sklearn.metrics import (
 from sklearn.model_selection import train_test_split
 from xgboost import XGBClassifier
 
-from fdshield_ml.service.decision_threshold import (
-    store_model_decision_threshold,
-    validate_decision_threshold,
-)
+from fdshield_ml.service.decision_threshold import validate_decision_threshold
 from fdshield_ml.service.xgboost_prediction import prediction_iteration_range
 
 DECISION_THRESHOLD = 0.5
@@ -168,8 +165,6 @@ def train_model(
         model.predict_proba(x_valid, iteration_range=iteration_range)[:, 1],
         index=y_valid.index,
     )
-    store_model_decision_threshold(model, DECISION_THRESHOLD)
-
     return ModelTrainingResult(
         model=model,
         validation_features=x_valid,

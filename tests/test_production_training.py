@@ -256,7 +256,6 @@ def test_train1_registers_candidate_with_comparison_metadata(
     assert calls["params"]["split_strategy"] == "random_stratified_80_20"
     assert calls["params"]["validation_fraction"] == pytest.approx(0.2)
     assert calls["params"]["decision_threshold"] == pytest.approx(0.5)
-    assert calls["model"].decision_threshold_ == pytest.approx(0.5)
     expected_range = prediction_iteration_range(
         calls["model"],
         calls["model"].get_booster(),
