@@ -60,7 +60,6 @@ class PredictService:
             raise PredictionServiceError("Model prediction failed") from exc
         fraud_probability = float(prediction["predict_proba"])
         return PredictResultDTO(
-            transaction_id=request.transaction_id,
             predict_result=int(fraud_probability >= self.threshold),
             predict_proba=fraud_probability,
             shap_values=shap_decode(prediction["shap_values"]),

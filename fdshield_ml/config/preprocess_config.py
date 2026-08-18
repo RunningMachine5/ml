@@ -65,8 +65,8 @@ MODEL_INPUT_COLUMNS = (
     "recipient_transaction_resumed_date",
 )
 
-# ML 담당자의 flat PredictInputDTO 전체 계약(transaction_id + raw51).
-SERVING_INPUT_COLUMNS = (TRANSACTION_ID_COLUMN, *MODEL_INPUT_COLUMNS)
+# ML 담당자의 flat PredictInputDTO 전체 계약(raw51).
+SERVING_INPUT_COLUMNS = MODEL_INPUT_COLUMNS
 
 # train1.csv는 기존 64열을 유지한다. 실시간 입력에서 빠진 식별·접속 컬럼은
 # 학습 파일 호환용으로만 남고 model79 전처리에서는 사용하지 않는다.

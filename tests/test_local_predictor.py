@@ -29,10 +29,7 @@ def test_bundled_model79_predicts_with_real_shap(
 ) -> None:
     service = load_local_predict_service(DEFAULT_LOCAL_MODEL_PATH)
     request = PredictInputDTO.model_validate(
-        {
-            "transaction_id": 1001,
-            **raw_features_factory(),
-        }
+        raw_features_factory()
     )
 
     first = service.predict(request)
@@ -51,13 +48,10 @@ def test_bundled_model79_accepts_supported_optional_values(
 ) -> None:
     service = load_local_predict_service(DEFAULT_LOCAL_MODEL_PATH)
     request = PredictInputDTO.model_validate(
-        {
-            "transaction_id": 1002,
-            **raw_features_factory(
-                account_account_type="e",
-                access_medium=None,
-            ),
-        }
+        raw_features_factory(
+            account_account_type="e",
+            access_medium=None,
+        )
     )
 
     result = service.predict(request)

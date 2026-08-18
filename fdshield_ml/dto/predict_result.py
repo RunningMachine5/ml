@@ -6,7 +6,6 @@ from pydantic import BaseModel, Field
 class PredictResultDTO(BaseModel):
     """ML 예측 결과와 운영 추적용 모델 메타데이터."""
 
-    transaction_id: int = Field(strict=True, gt=0)
     predict_result: int = Field(ge=0, le=1)
     predict_proba: float = Field(ge=0.0, le=1.0)
     shap_values: dict[str, float] = Field(default_factory=dict)
