@@ -19,9 +19,8 @@ def create_app(predict_service: PredictService | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # 실제 모드에서는 시작 시 고정 모델 버전을 모두 로딩한다. 실패하면
-        # Cloud Run 신규 Revision이 ready 상태가 되지 않는다. 모듈 import와
-        # OpenAPI 생성 자체는 모델 파일 없이도 가능하게 시작 단계로 분리한다.
+        # 요청마다 모델을 읽으면 느리므로 서버 시작 시 승인된 한 버전만 로딩한다.
+        # 로딩 실패 시 시작도 실패하게 해 잘못된 Revision이 트래픽을 받지 않게 한다.
         if predict_service is None:
             app.state.predict_service = predict_service_from_environment()
         yield

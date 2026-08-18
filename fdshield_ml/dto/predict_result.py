@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 
 class PredictResultDTO(BaseModel):
-    """ML 예측 결과와 운영 추적용 모델 메타데이터."""
+    """doo 예측 결과에 운영 추적용 모델 이름과 버전을 더한 응답."""
 
     predict_result: int = Field(ge=0, le=1)
     predict_proba: float = Field(ge=0.0, le=1.0)

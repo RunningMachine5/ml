@@ -1,6 +1,6 @@
 """
 [ML 서버 컨트롤러]
-거래 피처를 받아 예측 결과와 피처 기여도를 반환한다.
+거래 데이터를 받아 예측 결과와 피처 기여도를 반환한다.
 """
 
 from fastapi import APIRouter, Request
@@ -17,7 +17,8 @@ def ml_input(
     transaction: PredictInputDTO,
     request: Request,
 ) -> PredictResultDTO:
-    """Backend의 raw51 요청을 모델 예측 흐름에 전달한다."""
+    """Backend의 raw51 요청을 doo 예측 흐름에 전달한다."""
 
+    # 모델은 요청마다 다시 읽지 않고 서버 시작 시 한 번만 메모리에 올린다.
     service: PredictService = request.app.state.predict_service
     return service.predict(transaction)

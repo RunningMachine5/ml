@@ -1,4 +1,6 @@
-"""ML 담당자 전달본의 raw64/raw51 -> model79 전처리 설정.
+"""[전처리 피처 목록]
+
+ML 담당자 전달본의 raw64/raw51 -> model79 전처리 설정.
 
 학습 CSV와 실시간 추론은 식별·메타데이터 유무만 다르고 동일한 79개
 모델 Feature를 만든다. 이 모듈의 tuple 순서는 저장된 XGBoost 모델의
@@ -10,7 +12,7 @@ from __future__ import annotations
 TRANSACTION_ID_COLUMN = "transaction_id"
 LABEL_COLUMN = "is_fraud"
 
-# Backend 담당자가 계산해 보내는 실시간 Feature 51개다.
+# Backend 담당자가 계산해 보내는 실시간 피처 51개다.
 MODEL_INPUT_COLUMNS = (
     "customer_birth_date",
     "customer_gender",

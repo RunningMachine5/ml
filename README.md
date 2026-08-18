@@ -9,7 +9,7 @@ GCS, Cloud Run Job, MLflow Registry, Backend Callback, 관리자 수동 승인 �
 
 | 구분 | 계약 |
 |---|---|
-| 추론 API 입력 | flat raw52: `transaction_id` 1개 + 전처리 입력 raw51 |
+| 추론 API 입력 | Backend가 계산한 flat raw51 |
 | 학습 CSV 입력 | 원본·메타데이터·라벨을 포함한 train1 raw64 |
 | 전처리 출력 | 이름과 순서가 고정된 숫자 model79 |
 | 모델 | XGBoost binary logistic |
@@ -18,7 +18,8 @@ GCS, Cloud Run Job, MLflow Registry, Backend Callback, 관리자 수동 승인 �
 | 로컬 모델 번들 | `models/fdshield-fraud-detector-v2` |
 
 학습과 추론은 모두 `fdshield_ml/service/preprocessor.py`의 같은 raw51 전처리를
-사용합니다. `transaction_id`는 응답 연결용이며 model79에 들어가지 않습니다.
+사용합니다. `transaction_id`는 Backend에서 관리하며 ML 요청과 model79에는
+들어가지 않습니다.
 학습 raw64에는 raw51 외에 고객·계좌 식별값과 학습 메타데이터·라벨이 포함됩니다.
 CSV의 기존 이름인 `account_release_suspention`, `transaction_resumed_date`,
 `flag_deposit_more_than_tenmillion`은 로딩할 때 현재 계약 이름으로 바꿉니다.
@@ -37,7 +38,7 @@ Backend 계약대로 정수로 받습니다. 외부 canonical 입금 플래그 �
 
 ```text
 fdshield_ml/
-├── config/preprocess_config.py      # raw52/raw64/model79 컬럼 계약
+├── config/preprocess_config.py      # raw51/raw64/model79 컬럼 계약
 ├── dto/                              # PredictInputDTO, PredictResultDTO
 ├── service/                          # ML 담당자가 주로 수정하는 핵심 코드
 │   ├── preprocessor.py               # 학습·추론 공용 raw51 -> model79
@@ -60,7 +61,7 @@ data/open/train1.csv                # 로컬 학습 파일, Git 제외
 
 ### 처음 보는 순서
 
-1. `config/preprocess_config.py`에서 raw52·raw64·model79 컬럼 계약을 확인합니다.
+1. `config/preprocess_config.py`에서 raw51·raw64·model79 컬럼 계약을 확인합니다.
 2. `service/preprocessor.py`에서 학습과 추론이 공유하는 변환을 확인합니다.
 3. 실시간 추론은 `serving.py` → `api/ml_input.py` →
    `service/predict/predict_service.py` 순으로 읽습니다.
@@ -71,6 +72,10 @@ data/open/train1.csv                # 로컬 학습 파일, Git 제외
 ML 계산 코드는 `service/`, 배포 환경과 연결되는 코드는 `infrastructure/`에
 분리합니다. 따라서 전처리와 모델 학습을 수정할 때 Cloud Run이나 Callback
 구현을 따라갈 필요가 없습니다.
+
+`config`, `dto`, `service/predict`, `service/train`, `api` 순서는 doo 원본의
+`app/` 구조와 같습니다. 저장소 패키지 이름만 `fdshield_ml`로 유지해 Docker와
+Cloud Run의 기존 실행 경로가 바뀌지 않게 했습니다.
 
 ## 개발 환경
 
@@ -262,7 +267,7 @@ generation 관찰 및 `Ready=True`까지 끝나야 Backend 승인 대상으로 �
 |---|---|---|
 | `GET` | `/health` | 프로세스 상태 |
 | `GET` | `/ready` | 모델 로딩 완료 상태 |
-| `POST` | `/ml/predict` | 정식 flat raw52 추론 계약 |
+| `POST` | `/ml/predict` | 정식 flat raw51 추론 계약 |
 
 응답에는 판정, 확률, 거래별 SHAP과 운영 추적용 `model_name`, `model_version`이
 포함됩니다.
@@ -274,7 +279,7 @@ generation 관찰 및 `Ready=True`까지 끝나야 Backend 승인 대상으로 �
 3. MLflow의 성능 지표와 모델 비교 결과를 검토합니다.
 4. 수동 Serving Workflow에 후보의 정확한 모델명·버전을 넣어 새 코드와 모델을
    트래픽 0% revision으로 준비합니다.
-5. Backend 입력 DTO를 raw52 계약으로 전환한 뒤 관리자가 후보를 승인합니다.
+5. Backend 입력 DTO를 raw51 계약으로 전환한 뒤 관리자가 후보를 승인합니다.
 6. Backend 승격 API가 tagged revision에 실제 추론 smoke를 수행하고 100% 트래픽
    전환을 완료합니다.
 

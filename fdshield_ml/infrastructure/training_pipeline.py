@@ -78,6 +78,8 @@ def run_production_training(
 ) -> ProductionTrainingResult:
     """같은 core 학습 결과를 비교하고 MLflow 후보로 등록한다."""
 
+    # 위쪽 service/train은 모델 학습만 담당한다. 이 파일에서만 MLflow 비교와
+    # Registry 등록을 붙여 doo의 학습 코드가 운영 환경에 의존하지 않게 한다.
     try:
         mlflow_integration.configure_tracking(None)
         candidate = ml_train_flow(data_path, config.model)
