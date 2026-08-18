@@ -1,13 +1,13 @@
-"""거래를 받아 예측 결과와 Feature 기여도를 반환하는 ML API."""
+"""
+[ML 서버 컨트롤러]
+거래 피처를 받아 예측 결과와 피처 기여도를 반환한다.
+"""
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 
 from fdshield_ml.dto.predict_input import PredictInputDTO
 from fdshield_ml.dto.predict_result import PredictResultDTO
-from fdshield_ml.service.predict.predict_service import (
-    PredictionServiceError,
-    PredictService,
-)
+from fdshield_ml.service.predict.predict_service import PredictService
 
 router = APIRouter(prefix="/ml", tags=["machine learning"])
 
@@ -17,10 +17,7 @@ def ml_input(
     transaction: PredictInputDTO,
     request: Request,
 ) -> PredictResultDTO:
-    """ML 담당자의 flat raw52 요청을 받아 model79 예측 결과를 반환한다."""
+    """Backend의 raw51 요청을 모델 예측 흐름에 전달한다."""
 
     service: PredictService = request.app.state.predict_service
-    try:
-        return service.predict(transaction)
-    except PredictionServiceError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return service.predict(transaction)
