@@ -101,12 +101,11 @@ def test_ml_predict_returns_official_flat_contract(
 ) -> None:
     response = _client().post(
         "/ml/predict",
-        json={"transaction_id": 1001, **raw_features_factory()},
+        json=raw_features_factory(),
     )
 
     assert response.status_code == 200
     assert response.json() == {
-        "transaction_id": 1001,
         "predict_result": 1,
         "predict_proba": 0.8,
         "shap_values": {},
@@ -116,7 +115,7 @@ def test_ml_predict_returns_official_flat_contract(
 
 
 def test_ml_predict_rejects_missing_features() -> None:
-    response = _client().post("/ml/predict", json={"transaction_id": 1001})
+    response = _client().post("/ml/predict", json={})
 
     assert response.status_code == 422
 
@@ -129,7 +128,7 @@ def test_ml_predict_rejects_partial_transaction_features(
 
     response = _client().post(
         "/ml/predict",
-        json={"transaction_id": 1001, **features},
+        json=features,
     )
 
     assert response.status_code == 422
@@ -142,7 +141,6 @@ def test_ml_predict_rejects_unknown_features(
     response = _client().post(
         "/ml/predict",
         json={
-            "transaction_id": 1002,
             **raw_features_factory(new_transaction_field="draft-value"),
         },
     )
@@ -157,7 +155,6 @@ def test_ml_predict_rejects_training_label_and_identifiers(
     response = _client().post(
         "/ml/predict",
         json={
-            "transaction_id": 1003,
             **raw_features_factory(is_fraud=1, customer_id=123),
         },
     )
@@ -173,7 +170,6 @@ def test_ml_predict_rejects_invalid_duration(
     response = _client().post(
         "/ml/predict",
         json={
-            "transaction_id": 1004,
             **raw_features_factory(time_difference="not-a-duration"),
         },
     )
@@ -184,7 +180,7 @@ def test_ml_predict_rejects_invalid_duration(
 
 def test_current_model_contract_contains_raw51_and_model79() -> None:
     assert len(MODEL_INPUT_COLUMNS) == len(set(MODEL_INPUT_COLUMNS)) == 51
-    assert len(SERVING_INPUT_COLUMNS) == len(set(SERVING_INPUT_COLUMNS)) == 52
+    assert len(SERVING_INPUT_COLUMNS) == len(set(SERVING_INPUT_COLUMNS)) == 51
     assert len(MODEL_FEATURE_COLUMNS) == len(set(MODEL_FEATURE_COLUMNS)) == 79
 
 
@@ -232,10 +228,7 @@ def test_xgboost_shap_uses_best_iteration_range(
 
     result = service.predict(
         PredictInputDTO.model_validate(
-            {
-                "transaction_id": 1008,
-                **raw_features_factory(),
-            }
+            raw_features_factory()
         )
     )
 
