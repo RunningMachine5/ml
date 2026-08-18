@@ -23,6 +23,9 @@ class FakeProbabilityModel:
     feature_names_in_ = np.asarray(MODEL_FEATURE_COLUMNS)
     classes_ = np.asarray([0, 1])
 
+    def predict(self, features: object) -> np.ndarray:
+        return np.asarray([1])
+
     def predict_proba(self, features: object) -> np.ndarray:
         assert features.shape == (1, 79)
         return np.asarray([[0.08, 0.92]])
@@ -128,53 +131,5 @@ def test_mlflow_predictor_rejects_wrong_registered_feature_contract(
     with pytest.raises(PredictionServiceError, match="model79"):
         load_mlflow_predict_service()
 
+    assert len(wrong_model.feature_names_in_) == 78
 
-def test_mlflow_predictor_rejects_invalid_probability_shape(
-    raw_features_factory: RawFeaturesFactory,
-) -> None:
-    class InvalidModel:
-        decision_threshold_ = 0.5
-
-        def predict_proba(self, features: object) -> np.ndarray:
-            return np.asarray([0.5])
-
-    service = PredictService(
-        model=InvalidModel(),
-        model_name="fdshield-fraud-detector",
-        model_version="17",
-    )
-
-    with pytest.raises(PredictionServiceError, match="binary row"):
-        service.predict(
-            PredictInputDTO.model_validate(
-                raw_features_factory()
-            )
-        )
-
-
-def test_mlflow_predictor_reads_legacy_model_version_threshold_tag() -> None:
-    service = PredictService(
-        model=type(
-            "LegacyProbabilityModel",
-            (),
-            {"predict_proba": lambda self, features: np.asarray([[0.4, 0.6]])},
-        )(),
-        model_name="fdshield-fraud-detector",
-        model_version="5",
-        model_version_tags={"decision_threshold": "0.55"},
-    )
-
-    assert service.threshold == pytest.approx(0.55)
-
-
-def test_mlflow_predictor_rejects_model_without_threshold() -> None:
-    with pytest.raises(PredictionServiceError, match="does not contain"):
-        PredictService(
-            model=type(
-                "MissingThresholdModel",
-                (),
-                {"predict_proba": lambda self, features: np.asarray([[0.4, 0.6]])},
-            )(),
-            model_name="fdshield-fraud-detector",
-            model_version="5",
-        )

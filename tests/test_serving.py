@@ -27,6 +27,9 @@ class FakeProbabilityModel:
 
     decision_threshold_ = 0.5
 
+    def predict(self, features: object) -> np.ndarray:
+        return np.asarray([1])
+
     def predict_proba(self, features: object) -> np.ndarray:
         assert features.shape == (1, 79)
         assert list(features.columns) == list(MODEL_FEATURE_COLUMNS)
@@ -213,6 +216,9 @@ def test_xgboost_shap_uses_best_iteration_range(
     class EarlyStoppedModel:
         decision_threshold_ = 0.5
         best_iteration = 2
+
+        def predict(self, features: object) -> np.ndarray:
+            return np.asarray([0])
 
         def predict_proba(self, features: object) -> np.ndarray:
             return np.asarray([[0.7, 0.3]])

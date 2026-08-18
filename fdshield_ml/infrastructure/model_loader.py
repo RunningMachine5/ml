@@ -112,7 +112,6 @@ def load_local_predict_service(bundle_path: Path) -> PredictService:
         model=model,
         model_name=model_name,
         model_version=model_version,
-        model_version_tags={"decision_threshold": repr(threshold)},
     )
 
 
@@ -176,7 +175,6 @@ def load_mlflow_predict_service() -> PredictService:
     model_uri = f"models:/{model_name}/{model_version}"
     try:
         model = mlflow.sklearn.load_model(model_uri)
-        version = MlflowClient().get_model_version(model_name, model_version)
     except Exception as exc:
         raise PredictionServiceError(
             f"Failed to load registered model: {model_uri}"
@@ -186,7 +184,6 @@ def load_mlflow_predict_service() -> PredictService:
         model=model,
         model_name=model_name,
         model_version=model_version,
-        model_version_tags=getattr(version, "tags", None),
     )
 
 
