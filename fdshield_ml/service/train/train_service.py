@@ -1,4 +1,7 @@
-"""MLflow 없이도 사용할 수 있는 train1 전처리·학습 흐름."""
+"""
+[모델 학습 플로우 코드]
+train1 데이터를 전처리하고 모델을 학습시키는 전체 흐름을 관리한다.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
+
 from fdshield_ml.service.preprocessor import Preprocessor
 from fdshield_ml.service.train.dataset import (
     TrainingDatasetError,
@@ -47,6 +51,8 @@ def load_training_frame(data_path: str | Path) -> pd.DataFrame:
 def prepare_training_data(source: pd.DataFrame) -> PreparedTrainingData:
     """raw64 DataFrame을 검증하고 model79 행렬로 변환한다."""
 
+    # 데이터 계약 확인은 여기까지만 담당하고, 실제 피처 계산은 추론과 같은
+    # Preprocessor에 맡긴다.
     try:
         normalized = normalize_training_frame(source)
         target = validate_binary_target(normalized, context="training")
@@ -62,6 +68,7 @@ def train_candidate(
 ) -> ModelTrainingResult:
     """raw64 DataFrame 하나로 전처리와 XGBoost 후보 학습을 수행한다."""
 
+    # 이 함수는 GCS·MLflow를 몰라야 로컬 실험과 Cloud Run Job이 함께 쓸 수 있다.
     prepared = prepare_training_data(source)
     try:
         return train_model(prepared.features, prepared.target, config)
@@ -73,6 +80,7 @@ def ml_train_flow(
     data_path: str | Path,
     config: ModelTrainingConfig | None = None,
 ) -> ModelTrainingResult:
-    """전달본과 같은 이름으로 로컬 train1 학습 전체 흐름을 제공한다."""
+    """doo 원본과 같은 이름으로 train1 학습 전체 흐름을 제공한다."""
 
+    # 데이터 읽기 -> 전처리 -> 모델 학습 순서로 실행한다.
     return train_candidate(load_training_frame(data_path), config)

@@ -1,7 +1,8 @@
-"""전처리가 끝난 model79 데이터로 XGBoost 사기 탐지 모델을 학습한다.
-
-ML 담당자 전달본의 ``train_model`` 흐름과 하이퍼파라미터를 유지한다. GCS,
-MLflow, Backend Callback 같은 운영 인프라는 이 파일에서 다루지 않는다.
+"""
+[이진 탐색기 학습 코드]
+전처리가 끝난 model79 데이터를 학습용과 검증용으로 나누고 XGBoost 모델을
+학습한다. GCS, MLflow, Backend Callback 같은 운영 연결은 이 파일에서 다루지
+않는다.
 """
 
 from __future__ import annotations
@@ -32,43 +33,31 @@ class ModelTrainingError(RuntimeError):
 
 @dataclass(frozen=True)
 class ModelTrainingConfig:
-    """ML 담당자 전달본과 동일한 XGBoost 학습 설정."""
+    """doo 최신 main에서 사용하는 XGBoost 학습 설정."""
 
     random_state: int = 42
-    n_estimators: int = 1000
+    n_estimators: int = 10_000
     max_depth: int = 6
-    learning_rate: float = 0.05
+    learning_rate: float = 0.01
     min_child_weight: float = 1.0
     gamma: float = 0.0
     subsample: float = 0.8
     colsample_bytree: float = 0.8
     reg_lambda: float = 1.0
     reg_alpha: float = 0.0
-    scale_pos_weight: float = 99.0
+    scale_pos_weight: float = 65.1
     tree_method: str = "hist"
-    early_stopping_rounds: int = 50
+    early_stopping_rounds: int = 1_000
     n_jobs: int = -1
-
-    def __post_init__(self) -> None:
-        if self.n_estimators < 1 or self.max_depth < 1:
-            raise ValueError("model size must be positive")
-        if self.min_child_weight < 0:
-            raise ValueError("min_child_weight must not be negative")
-        if any(value < 0 for value in (self.gamma, self.reg_lambda, self.reg_alpha)):
-            raise ValueError("XGBoost regularization values must not be negative")
-        if self.scale_pos_weight <= 0:
-            raise ValueError("scale_pos_weight must be positive")
-        if self.early_stopping_rounds < 1:
-            raise ValueError("early_stopping_rounds must be positive")
-        if self.n_jobs == 0 or self.n_jobs < -1:
-            raise ValueError("n_jobs must be -1 or a positive integer")
-        if self.tree_method != "hist":
-            raise ValueError("tree_method must be hist for production training")
 
 
 @dataclass(frozen=True)
 class ModelTrainingResult:
-    """학습된 후보 모델과 동일 검증 세트의 평가 결과."""
+    """학습된 후보 모델과 동일 검증 세트의 평가 결과.
+
+    검증 데이터도 반환하는 이유는 MLflow에서 현재 운영 모델과 후보 모델을
+    완전히 같은 데이터로 비교하기 위해서다.
+    """
 
     model: XGBClassifier
     validation_features: pd.DataFrame
@@ -86,6 +75,7 @@ def evaluation_metrics(
 ) -> dict[str, float]:
     """후보와 현재 운영 모델을 고정 임계값 0.5로 평가한다."""
 
+    # 학습·비교·실시간 판정 기준이 달라지지 않도록 doo 정책인 0.5를 공통 사용한다.
     predicted = probability.ge(DECISION_THRESHOLD).astype("int8")
     tn, fp, _, _ = confusion_matrix(target, predicted, labels=[0, 1]).ravel()
     false_positive_rate = fp / (fp + tn) if fp + tn else 0.0
@@ -134,6 +124,8 @@ def train_model(
     """model79 데이터와 라벨을 분할해 XGBoost 후보 모델을 학습한다."""
 
     settings = config or ModelTrainingConfig()
+
+    # 데이터 학습용, 검증용으로 분리
     try:
         x_train, x_valid, y_train, y_valid = train_test_split(
             train_data,
@@ -147,6 +139,7 @@ def train_model(
             "train1 data cannot produce a stratified 80/20 split"
         ) from exc
 
+    # 모델 정의, 학습
     model = build_classifier(settings)
     model.fit(
         x_train,
@@ -154,6 +147,8 @@ def train_model(
         eval_set=[(x_valid, y_valid)],
         verbose=False,
     )
+    # 검증 데이터의 예측 확률로 성능을 평가한다.
+    # 조기 종료 뒤의 불필요한 트리는 평가에서 제외해 Serving 예측과 맞춘다.
     iteration_range = prediction_iteration_range(model, model.get_booster())
     probability = pd.Series(
         model.predict_proba(x_valid, iteration_range=iteration_range)[:, 1],

@@ -153,8 +153,8 @@ def test_received_training_defaults_and_manual_review_contract() -> None:
 
     assert model_training.VALIDATION_FRACTION == pytest.approx(0.2)
     assert model_training.DECISION_THRESHOLD == pytest.approx(0.5)
-    assert params["n_estimators"] == 1000
-    assert params["learning_rate"] == pytest.approx(0.05)
+    assert params["n_estimators"] == 10_000
+    assert params["learning_rate"] == pytest.approx(0.01)
     assert params["max_depth"] == 6
     assert params["min_child_weight"] == pytest.approx(1.0)
     assert params["gamma"] == pytest.approx(0.0)
@@ -162,10 +162,10 @@ def test_received_training_defaults_and_manual_review_contract() -> None:
     assert params["reg_alpha"] == pytest.approx(0.0)
     assert params["subsample"] == pytest.approx(0.8)
     assert params["colsample_bytree"] == pytest.approx(0.8)
-    assert params["scale_pos_weight"] == pytest.approx(99.0)
+    assert params["scale_pos_weight"] == pytest.approx(65.1)
     assert params["tree_method"] == "hist"
     assert params["eval_metric"] == "logloss"
-    assert params["early_stopping_rounds"] == 50
+    assert params["early_stopping_rounds"] == 1_000
     assert params["random_state"] == 42
     assert params["n_jobs"] == -1
     assert (
