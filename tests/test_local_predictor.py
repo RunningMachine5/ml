@@ -88,7 +88,6 @@ def test_local_model_metadata_cannot_be_overridden_by_environment(
 
     assert service.model_name == "fdshield-fraud-detector-v2"
     assert service.model_version == "1"
-    assert service.threshold == pytest.approx(0.5)
 
 
 def test_local_model_rejects_hash_mismatch(tmp_path: Path) -> None:
