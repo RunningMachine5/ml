@@ -1,4 +1,7 @@
-"""Backend 담당자가 계산한 정식 flat raw51 추론 입력 DTO."""
+"""
+[웹 Backend 서버에서 보내는 거래 데이터용 DTO]
+Backend가 계산한 정식 flat raw51 피처를 받는다.
+"""
 
 from __future__ import annotations
 
@@ -6,12 +9,14 @@ from datetime import date, datetime, timedelta
 
 from pydantic import BaseModel, ConfigDict
 
+
 class PredictInputDTO(BaseModel):
     """Backend가 계산한 raw51 피처를 받는 추론 요청.
 
     모델 전처리에 쓰지 않는 고객명·계좌번호·접속 식별값은 받지 않는다.
     """
 
+    # 잘못된 필드명이 조용히 무시되면 학습과 추론 값이 달라질 수 있어 금지한다.
     model_config = ConfigDict(extra="forbid")
 
     customer_birth_date: date

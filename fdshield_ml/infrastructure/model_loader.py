@@ -24,6 +24,7 @@ MANIFEST_FILE = "manifest.json"
 def predict_service_from_environment() -> PredictService:
     """환경변수에 따라 로컬 모델 또는 MLflow 모델을 선택한다."""
 
+    # 모델 계산 코드는 그대로 두고, 실행 환경에 따라 모델을 가져오는 위치만 바꾼다.
     mode = os.getenv("ML_PREDICTOR_MODE", "local").strip().lower()
     if mode == "local":
         return load_local_predict_service_from_environment()
@@ -68,6 +69,8 @@ def load_mlflow_predict_service() -> PredictService:
     model_version = os.environ["ML_MODEL_VERSION"]
 
     mlflow.set_tracking_uri(tracking_uri)
+    # champion 같은 움직이는 별칭 대신 승인된 정확한 버전을 고정해 불러온다.
+    # 새 모델은 새 Cloud Run Revision을 배포할 때만 바뀐다.
     model_uri = f"models:/{model_name}/{model_version}"
     try:
         model = mlflow.sklearn.load_model(model_uri)
