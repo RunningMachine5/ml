@@ -25,8 +25,6 @@ RawFeaturesFactory = Callable[..., dict[str, object]]
 class FakeProbabilityModel:
     """HTTP 계약에서 외부 모델 로딩만 격리하는 model79 테스트 대역."""
 
-    decision_threshold_ = 0.5
-
     def predict(self, features: object) -> np.ndarray:
         return np.asarray([1])
 
@@ -214,7 +212,6 @@ def test_xgboost_shap_uses_best_iteration_range(
     booster = RecordingBooster()
 
     class EarlyStoppedModel:
-        decision_threshold_ = 0.5
         best_iteration = 2
 
         def predict(self, features: object) -> np.ndarray:
