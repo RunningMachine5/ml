@@ -1,4 +1,4 @@
-"""train1 raw64 학습·MLflow Registry 등록 흐름 테스트."""
+"""train1 raw53 학습·MLflow Registry 등록 흐름 테스트."""
 
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -251,7 +251,7 @@ def test_train1_registers_candidate_with_comparison_metadata(
             TRAINING_DATA_CONTRACT,
         ),
     ]
-    assert calls["params"]["training_data_contract"] == "train1-raw64"
+    assert calls["params"]["training_data_contract"] == "train1-raw53"
     assert calls["params"]["feature_contract"] == TRAINING_DATA_CONTRACT
     assert calls["params"]["split_strategy"] == "random_stratified_80_20"
     assert calls["params"]["validation_fraction"] == pytest.approx(0.2)

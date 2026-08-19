@@ -1,4 +1,4 @@
-"""train1.csv 전용 raw64 학습 계약 테스트."""
+"""train1.csv 전용 raw53 학습 계약 테스트."""
 
 from collections.abc import Callable
 
@@ -38,7 +38,7 @@ def _training_frame(
     return pd.DataFrame(rows).loc[:, RAW_TRAINING_INPUT_COLUMNS]
 
 
-def test_train1_alias_contract_normalizes_to_canonical_raw64_order(
+def test_train1_alias_contract_normalizes_to_canonical_raw53_order(
     raw_features_factory: RawFeaturesFactory,
 ) -> None:
     source = _training_frame(raw_features_factory)
@@ -47,11 +47,11 @@ def test_train1_alias_contract_normalizes_to_canonical_raw64_order(
     normalized = normalize_training_frame(source)
 
     assert normalized.columns.tolist() == list(TRAINING_INPUT_COLUMNS)
-    assert len(normalized.columns) == 64
+    assert len(normalized.columns) == 53
     assert "flag_deposit_more_than_tenmillion" not in normalized
     assert "flag_deposit_more_than_ten_million" in normalized
     assert normalized["transaction_id"].tolist() == [1, 2, 3, 4]
-    assert TRAINING_DATA_CONTRACT == "fdshield-train1-raw64-to-model79-v1"
+    assert TRAINING_DATA_CONTRACT == "fdshield-train1-raw53-to-model79-v1"
 
 
 @pytest.mark.parametrize("mutation", ["missing", "extra"])
@@ -118,5 +118,5 @@ def test_training_transaction_ids_are_preserved_as_metadata(
 def test_preprocessed_model_columns_plus_label_are_not_a_training_contract() -> None:
     legacy_columns = [f"feature_{index}" for index in range(80)] + ["Is_Fraud"]
 
-    with pytest.raises(TrainingDatasetError, match="raw64"):
+    with pytest.raises(TrainingDatasetError, match="invalid training schema"):
         validate_training_columns(legacy_columns)
