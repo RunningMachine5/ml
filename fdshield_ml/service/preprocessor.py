@@ -31,7 +31,7 @@ class Preprocessor:
         return preprocess_transaction_features(transaction.model_dump())
 
     def train_preprocess(self, frame: pd.DataFrame) -> pd.DataFrame:
-        """raw64 학습 DataFrame을 model79 행렬로 변환한다."""
+        """raw53 학습 DataFrame을 model79 행렬로 변환한다."""
 
         return preprocess_frame(frame)
 
@@ -50,14 +50,14 @@ def normalize_column_aliases(source_frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def preprocess_frame(source_frame: pd.DataFrame) -> pd.DataFrame:
-    """raw51 또는 raw64 DataFrame을 순서가 고정된 model79 행렬로 바꾼다.
+    """raw51 또는 raw53 DataFrame을 순서가 고정된 model79 행렬로 바꾼다.
 
     train1.csv 메타데이터와 라벨은 모델 입력에서 제외한다. 비율 Feature 및
     과거 거래시각이 없는 행의 NaN은 XGBoost missing value로 보존한다.
     """
 
     normalized_frame = normalize_column_aliases(source_frame)
-    # raw64 학습 파일의 ID·개인정보·라벨은 모델 피처가 아니다. 학습과 추론이
+    # raw53 학습 파일의 거래 ID와 라벨은 모델 피처가 아니다. 학습과 추론이
     # 같은 계산을 사용하도록 양쪽 모두 여기서 raw51만 선택한다.
     source = normalized_frame.loc[:, MODEL_INPUT_COLUMNS].reset_index(drop=True).copy()
 
