@@ -11,22 +11,11 @@ def training_row_from_raw51(
     transaction_id: object,
     is_fraud: object,
 ) -> dict[str, object]:
-    """실시간 raw51에 학습 CSV 전용 열을 더해 train1 raw64 한 행을 만든다."""
+    """실시간 raw51에 거래 ID와 라벨을 더해 train1 raw53 한 행을 만든다."""
 
     row = {
         "transaction_id": transaction_id,
         **features,
-        "customer_name": "synthetic-customer",
-        "customer_identification_number": f"synthetic-{transaction_id}",
-        "account_account_number": f"source-{transaction_id}",
-        "error_code": None,
-        "ip_address": None,
-        "mac_address": None,
-        "location": None,
-        "recipient_account_number": f"recipient-{transaction_id}",
-        "first_time_ios_by_vulnerable_user": 0,
-        "customer_id": transaction_id,
-        "balance_drain_ratio": 0.1,
         "is_fraud": is_fraud,
     }
     row["account_release_suspention"] = row.pop("recipient_release_suspension")

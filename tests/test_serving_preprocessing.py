@@ -25,8 +25,8 @@ RawFeaturesFactory = Callable[..., dict[str, object]]
 def test_raw_and_model_contract_counts_are_fixed() -> None:
     assert len(MODEL_INPUT_COLUMNS) == len(set(MODEL_INPUT_COLUMNS)) == 51
     assert len(SERVING_INPUT_COLUMNS) == len(set(SERVING_INPUT_COLUMNS)) == 51
-    assert len(TRAINING_INPUT_COLUMNS) == len(set(TRAINING_INPUT_COLUMNS)) == 64
-    assert len(RAW_TRAINING_INPUT_COLUMNS) == len(set(RAW_TRAINING_INPUT_COLUMNS)) == 64
+    assert len(TRAINING_INPUT_COLUMNS) == len(set(TRAINING_INPUT_COLUMNS)) == 53
+    assert len(RAW_TRAINING_INPUT_COLUMNS) == len(set(RAW_TRAINING_INPUT_COLUMNS)) == 53
     assert len(MODEL_FEATURE_COLUMNS) == len(set(MODEL_FEATURE_COLUMNS)) == 79
 
 

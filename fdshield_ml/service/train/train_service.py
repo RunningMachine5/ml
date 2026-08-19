@@ -49,7 +49,7 @@ def load_training_frame(data_path: str | Path) -> pd.DataFrame:
 
 
 def prepare_training_data(source: pd.DataFrame) -> PreparedTrainingData:
-    """raw64 DataFrame을 검증하고 model79 행렬로 변환한다."""
+    """raw53 DataFrame을 검증하고 model79 행렬로 변환한다."""
 
     # 데이터 계약 확인은 여기까지만 담당하고, 실제 피처 계산은 추론과 같은
     # Preprocessor에 맡긴다.
@@ -66,7 +66,7 @@ def train_candidate(
     source: pd.DataFrame,
     config: ModelTrainingConfig | None = None,
 ) -> ModelTrainingResult:
-    """raw64 DataFrame 하나로 전처리와 XGBoost 후보 학습을 수행한다."""
+    """raw53 DataFrame 하나로 전처리와 XGBoost 후보 학습을 수행한다."""
 
     # 이 함수는 GCS·MLflow를 몰라야 로컬 실험과 Cloud Run Job이 함께 쓸 수 있다.
     prepared = prepare_training_data(source)

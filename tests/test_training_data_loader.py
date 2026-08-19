@@ -1,4 +1,4 @@
-"""로컬·GCS train1 raw64 학습 데이터 Loader 테스트."""
+"""로컬·GCS train1 raw53 학습 데이터 Loader 테스트."""
 
 from __future__ import annotations
 

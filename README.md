@@ -10,7 +10,7 @@ GCS, Cloud Run Job, MLflow Registry, Backend Callback, 관리자 수동 승인 �
 | 구분 | 계약 |
 |---|---|
 | 추론 API 입력 | Backend가 계산한 flat raw51 |
-| 학습 CSV 입력 | 원본·메타데이터·라벨을 포함한 train1 raw64 |
+| 학습 CSV 입력 | raw51 + `transaction_id` + `is_fraud`로 구성한 train1 raw53 |
 | 전처리 출력 | 이름과 순서가 고정된 숫자 model79 |
 | 모델 | XGBoost binary logistic |
 | 기본 판정 임계값 | `0.5` |
@@ -18,9 +18,8 @@ GCS, Cloud Run Job, MLflow Registry, Backend Callback, 관리자 수동 승인 �
 | 로컬 모델 번들 | `models/fdshield-fraud-detector-v2` |
 
 학습과 추론은 모두 `fdshield_ml/service/preprocessor.py`의 같은 raw51 전처리를
-사용합니다. `transaction_id`는 Backend에서 관리하며 ML 요청과 model79에는
-들어가지 않습니다.
-학습 raw64에는 raw51 외에 고객·계좌 식별값과 학습 메타데이터·라벨이 포함됩니다.
+사용합니다. 학습 CSV의 `transaction_id`는 행 식별용 메타데이터이고
+`is_fraud`는 정답 라벨이므로 둘 다 model79에는 들어가지 않습니다.
 CSV의 기존 이름인 `account_release_suspention`, `transaction_resumed_date`,
 `flag_deposit_more_than_tenmillion`은 로딩할 때 현재 계약 이름으로 바꿉니다.
 
@@ -38,12 +37,12 @@ Backend 계약대로 정수로 받습니다. 외부 canonical 입금 플래그 �
 
 ```text
 fdshield_ml/
-├── config/preprocess_config.py      # raw51/raw64/model79 컬럼 계약
+├── config/preprocess_config.py      # raw51/raw53/model79 컬럼 계약
 ├── dto/                              # PredictInputDTO, PredictResultDTO
 ├── service/                          # ML 담당자가 주로 수정하는 핵심 코드
 │   ├── preprocessor.py               # 학습·추론 공용 raw51 -> model79
 │   ├── predict/                      # 확률·SHAP·예측 흐름
-│   └── train/                        # raw64 검증·XGBoost 학습 흐름
+│   └── train/                        # raw53 검증·XGBoost 학습 흐름
 ├── infrastructure/                   # 운영 환경 연동
 │   ├── data_source.py                # 로컬·GCS 학습 데이터
 │   ├── model_loader.py               # 로컬·MLflow 고정 모델 로딩
@@ -61,7 +60,7 @@ data/open/train1.csv                # 로컬 학습 파일, Git 제외
 
 ### 처음 보는 순서
 
-1. `config/preprocess_config.py`에서 raw51·raw64·model79 컬럼 계약을 확인합니다.
+1. `config/preprocess_config.py`에서 raw51·raw53·model79 컬럼 계약을 확인합니다.
 2. `service/preprocessor.py`에서 학습과 추론이 공유하는 변환을 확인합니다.
 3. 실시간 추론은 `serving.py` → `api/ml_input.py` →
    `service/predict/predict_service.py` 순으로 읽습니다.
@@ -102,11 +101,9 @@ macOS/Linux:
 cp '<전달 폴더>/app/datas/train1.csv' ./data/open/train1.csv
 ```
 
-기준 데이터:
-
-- 200,000행, 64열
-- 정상 197,000건, 사기 3,000건
-- SHA-256: `D025873C5E807976657B30721080D00BF6B6544B887FF339E768E8C13F54E446`
+학습 CSV는 총 53열이며 `transaction_id`, raw51, `is_fraud` 순서로
+정규화됩니다. 행 수, 정상·사기 건수와 SHA-256은 GCS 데이터셋 버전마다
+달라지므로 해당 버전을 생성할 때 기록한 값을 확인합니다.
 
 CSV는 Git과 Docker 이미지에 포함하지 않습니다. 운영에서는 같은 파일을 비공개
 GCS의 버전 고정 경로에 업로드하고 SHA-256을 확인한 뒤 `TRAINING_DATA_URI`에
@@ -149,7 +146,7 @@ docker build -f Dockerfile.training -t fdshield/ml-training:local .
 docker run --rm --env-file .env.training -v "${PWD}/data/open:/app/data/open:ro" fdshield/ml-training:local
 ```
 
-Training Job은 raw64 스키마, 라벨, 거래 ID와 model79 전처리를 검증한 뒤
+Training Job은 raw53 스키마, 라벨, 거래 ID와 model79 전처리를 검증한 뒤
 stratified 80/20 분할로 후보 모델을 학습해 Registry에 등록합니다. 별도의 Stub이나
 검증 전용 실행 모드는 지원하지 않습니다.
 
@@ -297,7 +294,7 @@ uv run pytest
 
 핵심 검증 항목은 다음과 같습니다.
 
-- train1 raw64 스키마와 `is_fraud` 라벨
+- train1 raw53 스키마와 `is_fraud` 라벨
 - 학습·추론 전처리의 model79 이름과 순서 일치
 - 로컬 모델 manifest·해시·Feature 개수
 - `/health`, `/ready`, `/ml/predict`

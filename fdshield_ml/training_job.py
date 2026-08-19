@@ -1,4 +1,4 @@
-"""train1 raw64 데이터로 model79를 학습하는 Cloud Run Job 진입점."""
+"""train1 raw53 데이터로 model79를 학습하는 Cloud Run Job 진입점."""
 
 from __future__ import annotations
 

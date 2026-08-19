@@ -171,7 +171,7 @@ def register_candidate(
         mlflow.log_params(
             {
                 "model_type": "xgboost",
-                "training_data_contract": "train1-raw64",
+                "training_data_contract": "train1-raw53",
                 "feature_contract": TRAINING_DATA_CONTRACT,
                 "split_strategy": "random_stratified_80_20",
                 "validation_fraction": VALIDATION_FRACTION,
