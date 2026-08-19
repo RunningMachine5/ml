@@ -24,16 +24,17 @@ TRAINING_DATA_CONTRACT = "fdshield-train1-raw64-to-model79-v1"
 
 RAW_TRAINING_COLUMNS = tuple(RAW_TRAINING_INPUT_COLUMNS)
 CANONICAL_TRAINING_COLUMNS = tuple(TRAINING_INPUT_COLUMNS)
+ACCEPTED_COLUMNS = set(RAW_TRAINING_COLUMNS) | set(CANONICAL_TRAINING_COLUMNS)
 
 
 class TrainingDatasetError(ValueError):
-    """학습 CSV가 ``train1.csv`` 계약을 충족하지 않을 때 발생한다."""
+    """학습 CSV가 학습 데이터 계약을 충족하지 않을 때 발생한다."""
 
 
 def validate_training_columns(
     columns: pd.Index | list[str] | tuple[str, ...],
 ) -> None:
-    """실제 또는 alias 정규화 후의 train1 64열 계약을 검증한다."""
+    """학습 데이터 53열 계약을 검증하고 누락 및 미확인 컬럼을 차단한다."""
 
     provided = tuple(columns)
     duplicates = sorted({column for column in provided if provided.count(column) > 1})
@@ -42,18 +43,21 @@ def validate_training_columns(
             f"training data contains duplicate columns: {duplicates}"
         )
 
-    accepted_names = set(RAW_TRAINING_COLUMNS) | set(CANONICAL_TRAINING_COLUMNS)
-    missing = sorted(set(RAW_TRAINING_COLUMNS) - set(provided))
-    unknown = sorted(set(provided) - accepted_names)
+    missing = sorted(
+        canonical
+        for canonical, raw in zip(CANONICAL_TRAINING_COLUMNS, RAW_TRAINING_COLUMNS, strict=True)
+        if canonical not in provided and raw not in provided
+    )
+    unknown = sorted(set(provided) - ACCEPTED_COLUMNS)
     if not missing and not unknown:
         return
     raise TrainingDatasetError(
-        f"invalid train1 raw64 training schema: missing={missing}, unknown={unknown}"
+        f"invalid training schema: missing={missing}, unknown={unknown}"
     )
 
 
 def normalize_training_frame(source: pd.DataFrame) -> pd.DataFrame:
-    """train1 alias를 정식 이름으로 바꾸고 canonical 64열 순서로 정렬한다.
+    """train alias를 정식 이름으로 바꾸고 canonical 53열 순서로 정렬한다.
 
     ``transaction_id``는 모델 입력이 아닌 행 식별용 메타데이터이므로
     원본 CSV 값을 변환하지 않고 그대로 보존한다.
