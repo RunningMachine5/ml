@@ -240,23 +240,21 @@ ML_MODEL_VERSION=1
 ```
 
 Serving은 alias가 아닌 정확한 Registry 버전을 로드합니다. GitHub의
-`ML Serving Cloud Run CD`는 자동 실행되지 않으며, `model_name`과
-`model_version`을 입력해 수동 실행합니다. 이 Workflow는 새 이미지를 빌드하고
-Cloud Build에서 실제 추론을 검증한 뒤 Cloud Run revision을 **트래픽 0%**로만
-준비합니다. revision tag는 Backend 계약과 동일한 `model-v<model_version>`이며,
-운영 트래픽 전환은 하지 않습니다.
+`ML Serving Cloud Run CD`는 추론 관련 코드가 `main`에 반영될 때 실행되며 모델
+이름이나 버전을 입력받지 않습니다. 현재 트래픽 100%를 받는 revision의 모델 설정을
+읽어 새 이미지의 실제 추론을 검증하고, 새 code revision이 Ready 상태가 된 뒤 같은
+모델을 유지한 채 운영 트래픽을 100% 전환합니다.
 
-동일한 모델 버전으로 Workflow를 재실행했을 때 기존 tag가 최신 Ready revision,
-검증된 image digest, 정확한 모델 환경변수, 트래픽 0%를 모두 만족하면 해당 revision을
-그대로 재사용합니다. 하나라도 다르면 tag를 다른 revision으로 옮기지 않고 배포를
-실패시킵니다. 따라서 다른 코드나 모델 설정을 준비하려면 새 모델 버전을 사용해야
-합니다.
+새 학습 모델은 Backend가 관리합니다. 관리자가 승인하면 Backend가 현재 운영 image
+digest를 재사용하고 `ML_MODEL_VERSION`만 변경한 `model-v<model_version>` revision을
+트래픽 0%로 만듭니다. tagged URL smoke가 성공한 뒤에만 해당 모델로 운영 트래픽을
+전환합니다. 따라서 모델만 바뀌는 경우 Serving 이미지를 다시 빌드하지 않습니다.
 
 기존 active revision에서 이어받는 `MLFLOW_TRACKING_URI`는 HTTP(S) origin 또는
 origin 뒤 path만 허용합니다. URL 안의 사용자명·비밀번호, query, fragment는 배포
 전에 거절하며 MLflow 자격 증명은 별도의 Secret Manager 참조로만 전달합니다.
-candidate는 최신 created 및 최신 Ready revision이어야 하고, Service와 revision의
-generation 관찰 및 `Ready=True`까지 끝나야 Backend 승인 대상으로 인정됩니다.
+새 code revision은 최신 created 및 최신 Ready revision이어야 하고, Service와
+revision의 generation 관찰 및 `Ready=True`까지 끝난 뒤에만 자동 전환됩니다.
 
 ### API
 
@@ -274,9 +272,9 @@ generation 관찰 및 `Ready=True`까지 끝나야 Backend 승인 대상으로 �
 1. `train1.csv`를 비공개 GCS의 버전 고정 경로에 업로드하고 해시를 확인합니다.
 2. Cloud Run Training Job을 실행해 후보 모델을 MLflow Registry에 등록합니다.
 3. MLflow의 성능 지표와 모델 비교 결과를 검토합니다.
-4. 수동 Serving Workflow에 후보의 정확한 모델명·버전을 넣어 새 코드와 모델을
-   트래픽 0% revision으로 준비합니다.
-5. Backend 입력 DTO를 raw51 계약으로 전환한 뒤 관리자가 후보를 승인합니다.
+4. Backend와 ML Serving의 입력 계약이 맞는지 확인한 뒤 관리자가 후보를 승인합니다.
+5. Backend가 현재 Serving 이미지를 재사용해 후보 모델을 트래픽 0% revision으로
+   준비합니다.
 6. Backend 승격 API가 tagged revision에 실제 추론 smoke를 수행하고 100% 트래픽
    전환을 완료합니다.
 
