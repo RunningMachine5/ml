@@ -9,7 +9,7 @@ from deploy.serving_revision_contract import (
     resolve_tag_target,
     revision_traffic_percent,
     validate_mlflow_tracking_uri,
-    validate_staged_revision,
+    validate_zero_traffic_revision,
 )
 
 
@@ -74,7 +74,7 @@ def _validate(
     service: dict[str, object] | None = None,
     revision: dict[str, object] | None = None,
 ) -> None:
-    validate_staged_revision(
+    validate_zero_traffic_revision(
         service=service or _service(),
         revision=revision or _revision(),
         expected_revision=STAGED_REVISION,

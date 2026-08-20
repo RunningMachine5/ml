@@ -37,7 +37,7 @@ def test_github_runner_does_not_call_internal_cloud_run_url() -> None:
 
     assert "Issue Cloud Run identity token for smoke test" not in workflow
     assert "Smoke test tagged revision" not in workflow
-    assert "Verify tagged revision configuration" in workflow
+    assert "Verify code revision configuration" in workflow
     assert "deploy/serving_revision_contract.py verify" in workflow
     assert 'gcloud run revisions describe "$NEW_REVISION"' in workflow
     assert '--remove-env-vars="ML_FRAUD_THRESHOLD"' in workflow
@@ -46,31 +46,33 @@ def test_github_runner_does_not_call_internal_cloud_run_url() -> None:
     assert 'status.get("latestCreatedRevisionName")' in contract
     assert "_resource_reconciliation_errors(service" in contract
     assert "status.traffic[0]" not in workflow
-    assert "revision_percent != {approved_revision: 100}" in workflow
+    assert "revision_percent != {deployed_revision: 100}" in workflow
     assert "latestCreatedRevisionName" not in workflow
 
 
-def test_github_actions_stages_requested_model_without_automatic_traffic() -> None:
+def test_github_actions_deploys_code_with_the_current_production_model() -> None:
     workflow = (ROOT / ".github" / "workflows" / "deploy-serving.yml").read_text(
         encoding="utf-8"
     )
 
-    assert "push:" not in workflow
+    assert "push:" in workflow
+    assert "branches: [main]" in workflow
+    assert '"fdshield_ml/api/**"' in workflow
+    assert '"fdshield_ml/service/**"' in workflow
     assert "workflow_dispatch:" in workflow
-    assert "model_name:" in workflow
-    assert "model_version:" in workflow
-    assert "REQUESTED_MODEL_NAME: ${{ inputs.model_name }}" in workflow
-    assert "REQUESTED_MODEL_VERSION: ${{ inputs.model_version }}" in workflow
+    assert "inputs.model_name" not in workflow
+    assert "inputs.model_version" not in workflow
+    assert 'environment.get("ML_MODEL_NAME"' in workflow
+    assert 'environment.get("ML_MODEL_VERSION"' in workflow
     assert 'gcloud run revisions describe "$active_revision"' in workflow
     assert "--no-traffic" in workflow
-    assert 'revision_tag="model-v${MODEL_VERSION}"' in workflow
-    assert "model-${GITHUB_SHA::12}" not in workflow
-    assert "Reuse exact staged revision or reject model tag collision" in workflow
-    assert "Model version tags are immutable and will not be moved" in workflow
-    assert "SERVING_DEPLOY_MODE=reuse" in workflow
-    assert "gcloud run services update-traffic" not in workflow
-    assert "Confirm production traffic was not changed" in workflow
-    assert "Use the Backend approval and smoke" in workflow
+    assert 'revision_tag="code-${GITHUB_SHA::7}-' in workflow
+    assert "model-v${MODEL_VERSION}" not in workflow
+    assert "Reuse exact staged revision" not in workflow
+    assert "gcloud run services update-traffic" in workflow
+    assert '--to-revisions="$NEW_REVISION=100"' in workflow
+    assert "Confirm the new code revision owns production traffic" in workflow
+    assert "100% production traffic with the existing MLflow model" in workflow
 
 
 def test_training_deploy_removes_legacy_promotion_environment() -> None:

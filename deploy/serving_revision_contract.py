@@ -1,4 +1,4 @@
-"""Validate the immutable Cloud Run tag used for a staged ML model revision."""
+"""Validate a new Cloud Run Serving revision before it receives traffic."""
 
 from __future__ import annotations
 
@@ -160,7 +160,7 @@ def _resource_reconciliation_errors(
     return errors
 
 
-def validate_staged_revision(
+def validate_zero_traffic_revision(
     *,
     service: Mapping[str, Any],
     revision: Mapping[str, Any],
@@ -171,15 +171,15 @@ def validate_staged_revision(
     expected_model_name: str,
     expected_model_version: str,
 ) -> None:
-    """Validate the exact Ready, tag, image, model environment and 0% contract."""
+    """Validate the Ready, tag, image, model environment and 0% contract."""
 
     errors: list[str] = []
     status = _status(service)
     errors.extend(_resource_reconciliation_errors(service, "service"))
     if status.get("latestCreatedRevisionName") != expected_revision:
-        errors.append("staged revision is not the latest created revision")
+        errors.append("new revision is not the latest created revision")
     if status.get("latestReadyRevisionName") != expected_revision:
-        errors.append("staged revision is not the latest Ready revision")
+        errors.append("new revision is not the latest Ready revision")
 
     try:
         tagged_revision, _ = resolve_tag_target(service, expected_tag)
@@ -187,7 +187,7 @@ def validate_staged_revision(
         errors.append(str(exc))
     else:
         if tagged_revision != expected_revision:
-            errors.append("model version tag targets a different revision")
+            errors.append("revision tag targets a different revision")
 
     metadata = revision.get("metadata", {})
     revision_name = metadata.get("name", "") if isinstance(metadata, Mapping) else ""
@@ -201,7 +201,7 @@ def validate_staged_revision(
         errors.append(str(exc))
     else:
         if container.get("image") != expected_digest:
-            errors.append("staged revision does not use the verified image digest")
+            errors.append("new revision does not use the verified image digest")
 
         env_items = container.get("env", [])
         environment = {
@@ -216,12 +216,12 @@ def validate_staged_revision(
         }
         for name, value in expected_environment.items():
             if environment.get(name) != value:
-                errors.append(f"{name} does not match the requested model")
+                errors.append(f"{name} does not match the expected model")
         if "ML_FRAUD_THRESHOLD" in environment:
             errors.append("legacy ML_FRAUD_THRESHOLD remains")
 
     if revision_traffic_percent(service, expected_revision) != 0:
-        errors.append("staged revision has production traffic")
+        errors.append("new revision already has production traffic")
 
     if errors:
         raise ServingRevisionContractError("; ".join(errors))
@@ -260,11 +260,11 @@ def _resolve_command(args: argparse.Namespace) -> None:
     if revision:
         print(f"Resolved {args.tag} to {revision}.")
     else:
-        print(f"Tag {args.tag} is available for a new staged revision.")
+        print(f"Tag {args.tag} is available for a new revision.")
 
 
 def _verify_command(args: argparse.Namespace) -> None:
-    validate_staged_revision(
+    validate_zero_traffic_revision(
         service=_load_json(args.service),
         revision=_load_json(args.revision),
         expected_revision=args.expected_revision,
