@@ -189,6 +189,10 @@ def test_training_job_main_reports_candidate_result(tmp_path: Path) -> None:
     assert events[1]["recommendation"] == "RECOMMENDED"
     assert notifications == [
         {
+            "status": "RUNNING",
+            "cloud_run_execution_name": "fdshield-binary-training-abc12",
+        },
+        {
             "status": "SUCCEEDED",
             "mlflow_run_id": "run-123",
             "cloud_run_execution_name": "fdshield-binary-training-abc12",
@@ -326,6 +330,10 @@ def test_production_training_failure_notifies_backend(tmp_path: Path) -> None:
 
     assert exit_code == 5
     assert notifications == [
+        {
+            "status": "RUNNING",
+            "cloud_run_execution_name": "fdshield-binary-training-failed1",
+        },
         {
             "status": "FAILED",
             "error_message": "MLflow registration failed",
