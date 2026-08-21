@@ -131,6 +131,32 @@ def _config_log_fields(config: TrainingJobConfig) -> dict[str, object]:
     return fields
 
 
+def _notify_training_started(
+    config: TrainingJobConfig,
+    result_notifier: TrainingResultNotifier,
+    stderr: TextIO,
+) -> None:
+    """Execution 이름을 학습 시작과 함께 Backend Run에 연결한다."""
+
+    if (
+        config.backend_training_run_id is None
+        or not config.cloud_run_execution_name
+    ):
+        return
+    try:
+        result_notifier(
+            config,
+            with_cloud_run_execution(config, {"status": "RUNNING"}),
+        )
+    except TrainingResultNotificationError as error:
+        # 진행 알림이 잠시 실패해도 최종 성공·실패 결과는 계속 전달해야 한다.
+        _write_event(
+            stderr,
+            "training_progress_notification_error",
+            message=str(error),
+        )
+
+
 def _notify_training_failure(
     config: CallbackConfig | None,
     error: BaseException,
@@ -230,6 +256,7 @@ def main(
     try:
         callback_config = TrainingCallbackConfig.from_env(source_environ)
         config = TrainingJobConfig.from_env(source_environ)
+        _notify_training_started(config, result_notifier, stderr)
         run_model_training(
             config,
             stdout,
