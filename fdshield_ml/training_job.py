@@ -83,21 +83,9 @@ class TrainingJobConfig:
             raise ValueError("MLFLOW_MODEL_ALIAS is required")
 
         data_source_type(values["data_uri"])
-        quality_thresholds = {
-            "MODEL_MIN_PR_AUC": environ.get("MODEL_MIN_PR_AUC", "").strip(),
-            "MODEL_MIN_RECALL": environ.get("MODEL_MIN_RECALL", "").strip(),
-        }
-        missing_thresholds = [
-            name for name, value in quality_thresholds.items() if not value
-        ]
-        if missing_thresholds:
-            raise ValueError(
-                f"Required environment variables: {', '.join(missing_thresholds)}"
-            )
-
         try:
-            minimum_pr_auc = float(quality_thresholds["MODEL_MIN_PR_AUC"])
-            minimum_recall = float(quality_thresholds["MODEL_MIN_RECALL"])
+            minimum_pr_auc = float(environ.get("MODEL_MIN_PR_AUC") or "0")
+            minimum_recall = float(environ.get("MODEL_MIN_RECALL") or "0")
         except ValueError as exc:
             raise ValueError(
                 "MODEL_MIN_PR_AUC and MODEL_MIN_RECALL must be numbers"
@@ -107,8 +95,8 @@ class TrainingJobConfig:
             ("MODEL_MIN_PR_AUC", minimum_pr_auc),
             ("MODEL_MIN_RECALL", minimum_recall),
         ):
-            if not 0 < value <= 1:
-                raise ValueError(f"{name} must be greater than 0 and at most 1")
+            if not 0 <= value <= 1:
+                raise ValueError(f"{name} must be between 0 and 1")
 
         return cls(
             **values,

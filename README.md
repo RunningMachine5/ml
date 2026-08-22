@@ -164,8 +164,8 @@ MLflow에 저장합니다. 같은 model79 계약의 현재 champion이 있으면
 | `MLFLOW_EXPERIMENT_NAME` | MLflow 실험 이름 |
 | `MLFLOW_REGISTERED_MODEL_NAME` | 기본 `fdshield-fraud-detector-v2` |
 | `MLFLOW_MODEL_ALIAS` | 비교할 운영 alias, 기본 `champion` |
-| `MODEL_MIN_PR_AUC` | 필수 후보 최소 PR-AUC (`0 < 값 <= 1`, 운영 품질 정책으로 결정) |
-| `MODEL_MIN_RECALL` | 필수 후보 최소 Recall (`0 < 값 <= 1`, 운영 품질 정책으로 결정) |
+| `MODEL_MIN_PR_AUC` | 선택 후보 최소 PR-AUC(`0~1`), 기본 `0`(품질 기준 미사용) |
+| `MODEL_MIN_RECALL` | 선택 후보 최소 Recall(`0~1`), 기본 `0`(품질 기준 미사용) |
 | `BACKEND_TRAINING_RUN_ID` | Backend가 만든 학습 실행 ID |
 | `TRAINING_RESULT_CALLBACK_URL` | 학습 결과 Callback 주소 |
 | `TRAINING_RESULT_CALLBACK_TOKEN` | Secret Manager로 주입할 Callback Token |
@@ -177,10 +177,9 @@ MLflow에 저장합니다. 같은 model79 계약의 현재 champion이 있으면
 보냅니다. 모델 버전, 성능 지표와 비교 결과는 MLflow에서 조회하고 Backend
 관리자가 승인합니다.
 
-`MODEL_MIN_PR_AUC`와 `MODEL_MIN_RECALL`은 Backend가 학습 실행마다 주입하는 필수
-품질 기준입니다. 저장소의 예시 값은 실행 형식만 보여 주며, 실제 운영값은 모델
-검증 결과와 서비스의 탐지 정책에 따라 담당자가 별도로 정해야 합니다. 두 값이
-누락되거나 `0 < 값 <= 1` 범위를 벗어나면 Training Job은 설정 오류로 종료됩니다.
+`MODEL_MIN_PR_AUC`와 `MODEL_MIN_RECALL`은 선택 설정입니다. 현재처럼 품질 기준을
+사용하지 않으면 생략하거나 `0`으로 두며, 이 경우에도 학습과 모델 등록은 계속
+진행되고 실제 PR-AUC와 Recall 지표는 MLflow에 기록됩니다.
 
 Training 이미지는 `Dockerfile.training`과 `cloudbuild.training.yaml`로 만들며,
 CI와 Cloud Build는 컨테이너를 실제 실행해 `fdshield_ml.training_job` 진입점까지
