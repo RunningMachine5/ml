@@ -26,6 +26,8 @@ from fdshield_ml.training_job import (
 VALID_ENV = {
     "TRAINING_DATA_URI": "data/open/train1.csv",
     "MLFLOW_EXPERIMENT_NAME": "fdshield-binary-training",
+    "MODEL_MIN_PR_AUC": "0.75",
+    "MODEL_MIN_RECALL": "0.8",
 }
 
 
@@ -52,6 +54,8 @@ def test_training_job_config_reads_required_environment() -> None:
         data_uri="data/open/train1.csv",
         experiment_name="fdshield-binary-training",
         registered_model_name=DEFAULT_REGISTERED_MODEL_NAME,
+        minimum_pr_auc=0.75,
+        minimum_recall=0.8,
     )
 
 
@@ -61,6 +65,39 @@ def test_training_job_config_reads_required_environment() -> None:
 )
 def test_training_job_config_rejects_missing_environment(variable: str) -> None:
     environ = {**VALID_ENV, variable: ""}
+
+    with pytest.raises(ValueError, match=variable):
+        TrainingJobConfig.from_env(environ)
+
+
+@pytest.mark.parametrize(
+    "variable",
+    ["MODEL_MIN_PR_AUC", "MODEL_MIN_RECALL"],
+)
+def test_training_job_config_rejects_missing_quality_threshold(variable: str) -> None:
+    environ = dict(VALID_ENV)
+    environ.pop(variable)
+
+    with pytest.raises(ValueError, match=variable):
+        TrainingJobConfig.from_env(environ)
+
+
+@pytest.mark.parametrize(
+    ("variable", "value"),
+    [
+        ("MODEL_MIN_PR_AUC", "0"),
+        ("MODEL_MIN_PR_AUC", "-0.1"),
+        ("MODEL_MIN_PR_AUC", "1.01"),
+        ("MODEL_MIN_RECALL", "0"),
+        ("MODEL_MIN_RECALL", "-0.1"),
+        ("MODEL_MIN_RECALL", "1.01"),
+    ],
+)
+def test_training_job_config_rejects_quality_threshold_outside_range(
+    variable: str,
+    value: str,
+) -> None:
+    environ = {**VALID_ENV, variable: value}
 
     with pytest.raises(ValueError, match=variable):
         TrainingJobConfig.from_env(environ)
@@ -110,6 +147,21 @@ def test_training_job_main_reports_configuration_error() -> None:
     assert stdout.getvalue() == ""
     assert error["event"] == "training_job_configuration_error"
     assert "TRAINING_DATA_URI" in error["message"]
+
+
+def test_training_job_main_reports_invalid_quality_threshold() -> None:
+    stderr = io.StringIO()
+
+    exit_code = main(
+        {**VALID_ENV, "MODEL_MIN_RECALL": "0"},
+        stdout=io.StringIO(),
+        stderr=stderr,
+    )
+    error = json.loads(stderr.getvalue())
+
+    assert exit_code == 2
+    assert error["event"] == "training_job_configuration_error"
+    assert "MODEL_MIN_RECALL" in error["message"]
 
 
 def test_training_job_configuration_failure_notifies_backend() -> None:
