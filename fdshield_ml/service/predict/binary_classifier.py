@@ -17,8 +17,8 @@ def predict(model: object, data: pd.DataFrame) -> dict[str, object]:
     """사기 여부, 사기 확률, model79 기여도를 계산한다."""
 
     # 모델은 Serving 시작 시 한 번 불러오며 여기서는 예측만 수행한다.
-    predict_result = model.predict(data)
     predict_proba = model.predict_proba(data)
+    predict_result = 1 if predict_proba[0, 1] >= 0.45 else 0
 
     # XGBoost가 제공하는 SHAP 기여도를 model79 이름과 함께 계산한다.
     shap_values: dict[str, float] = {}
@@ -40,7 +40,7 @@ def predict(model: object, data: pd.DataFrame) -> dict[str, object]:
         }
 
     return {
-        "predict_result": int(predict_result[0]),
+        "predict_result": int(predict_result),
         "predict_proba": float(predict_proba[0, 1]),
         "shap_values": shap_values,
     }

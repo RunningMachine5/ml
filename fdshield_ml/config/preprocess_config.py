@@ -99,7 +99,7 @@ RAW_TRAINING_INPUT_COLUMNS = tuple(
 CATEGORICAL_LEVELS = {
     "customer_gender": ("male", "female"),
     "customer_loan_type": ("a", "b", "c", "d", "e"),
-    "account_account_type": ("a", "b", "c", "d"),
+    "account_account_type": ("a", "b", "c", "d", "e"),
     "channel": ("mobile", "internet", "atm", "others"),
     "operating_system": (
         "android",
@@ -217,6 +217,7 @@ MODEL_FEATURE_COLUMNS = (
     "account_account_type_b",
     "account_account_type_c",
     "account_account_type_d",
+    "account_account_type_e",
     "channel_mobile",
     "channel_internet",
     "channel_atm",
